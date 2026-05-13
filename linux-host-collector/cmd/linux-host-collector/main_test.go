@@ -296,16 +296,16 @@ func TestScanOSSLocalAppliesIncludeExcludeAndDays(t *testing.T) {
 	}
 }
 
-func TestRunScanRejectsUnknownNetworkFlags(t *testing.T) {
+func TestRunScanRejectsUnknownFlags(t *testing.T) {
 	withEffectiveUID(t, 0)
 
 	err := run([]string{
 		"scan",
-		"--cloud-url", "https://example.invalid",
+		"--unknown-option", "value",
 		"--output-dir", filepath.Join(t.TempDir(), "out"),
 	})
 	if err == nil {
-		t.Fatalf("expected cloud-url flag to be rejected")
+		t.Fatalf("expected unknown flag to be rejected")
 	}
 	if !strings.Contains(err.Error(), "flag provided but not defined") {
 		t.Fatalf("expected undefined flag error, got %v", err)
