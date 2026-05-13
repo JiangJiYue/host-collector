@@ -1,0 +1,3 @@
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+1 5 persist-daily /tmp/.cache/anacron-agent --daily

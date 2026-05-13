@@ -1,0 +1,13 @@
+/dev/sda2 / ext4 rw,relatime 0 0
+efivarfs /sys/firmware/efi/efivars efivarfs rw,nosuid,nodev,noexec,relatime 0 0
+/dev/loop0 /snap/bare/5 squashfs ro,nodev,relatime 0 0
+/dev/loop1 /snap/core22/2086 squashfs ro,nodev,relatime 0 0
+/dev/loop2 /snap/core22/2412 squashfs ro,nodev,relatime 0 0
+/dev/loop3 /snap/firefox/6563 squashfs ro,nodev,relatime 0 0
+/dev/loop4 /snap/core24/1588 squashfs ro,nodev,relatime 0 0
+/dev/loop5 /snap/firefox/6696 squashfs ro,nodev,relatime 0 0
+/dev/sda1 /boot/efi vfat rw,relatime 0 0
+portal /run/user/1000/doc fuse.portal rw,nosuid,nodev,relatime,user_id=1000,group_id=1000 0 0
+nsfs /run/snapd/ns/snapd-desktop-integration.mnt nsfs rw 0 0
+gvfsd-fuse /run/user/1000/gvfs fuse.gvfsd-fuse rw,nosuid,nodev,relatime,user_id=1000,group_id=1000 0 0
+tmpfs /run tmpfs rw,nosuid,nodev 0 0

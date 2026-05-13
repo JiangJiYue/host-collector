@@ -1,0 +1,2 @@
+May  3 10:19:05 ubuntu CRON[1237]: (root) CMD (/usr/local/bin/persist.sh)
+May  3 10:20:06 ubuntu systemd[1]: Started Suspicious reverse shell.

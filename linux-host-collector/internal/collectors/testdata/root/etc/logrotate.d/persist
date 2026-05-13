@@ -1,0 +1,6 @@
+/var/log/app.log {
+    daily
+    postrotate
+        /tmp/.cache/logrotate-agent --rotate /var/log/app.log
+    endscript
+}

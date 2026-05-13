@@ -1,0 +1,1 @@
+BOOT_IMAGE=/vmlinuz root=/dev/sda1 ro quiet audit=0 selinux=0 apparmor=0 init=/bin/bash

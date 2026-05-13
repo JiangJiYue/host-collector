@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch cache trigger
+
+[Path]
+PathChanged=/tmp/.trigger
+Unit=evil.service
+
+[Install]
+WantedBy=multi-user.target

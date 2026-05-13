@@ -1,0 +1,4 @@
+[Desktop Entry]
+Type=Application
+Name=User Agent
+Exec=/home/alice/.local/bin/gui-agent --tray

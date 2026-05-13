@@ -1,0 +1,9 @@
+[Unit]
+Description=User level agent
+Wants=network-online.target
+
+[Service]
+ExecStart=/home/alice/.local/bin/agent --foreground
+
+[Install]
+WantedBy=default.target

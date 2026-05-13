@@ -1,0 +1,4 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          legacy-agent
+### END INIT INFO

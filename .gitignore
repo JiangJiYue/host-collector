@@ -1,0 +1,9 @@
+dist/
+.vite/
+.DS_Store
+*.log
+*.tmp
+*.test
+*.exe
+host-collector-linux-*
+host-collector-windows*-cli.exe

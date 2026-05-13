@@ -1,0 +1,5 @@
+*filter
+:INPUT ACCEPT [0:0]
+-A INPUT -p tcp --dport 22 -j DROP
+-A OUTPUT -d 198.51.100.10/32 -j ACCEPT
+COMMIT

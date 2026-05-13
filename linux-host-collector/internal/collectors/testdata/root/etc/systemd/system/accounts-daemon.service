@@ -1,0 +1,11 @@
+[Unit]
+Description=Accounts Service
+Wants=dbus.socket
+
+[Service]
+User=root
+Group=root
+ExecStart=/usr/libexec/accounts-daemon
+
+[Install]
+WantedBy=multi-user.target

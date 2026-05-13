@@ -1,0 +1,37 @@
+Package: bash
+Status: install ok installed
+Priority: required
+Section: shells
+Installed-Size: 7164
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Architecture: amd64
+Version: 5.2.21-2ubuntu4
+Description: GNU Bourne Again SHell
+ Bash is an sh-compatible command language interpreter.
+
+Package: openssh-server
+Status: install ok installed
+Priority: optional
+Section: net
+Installed-Size: 1512
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Architecture: amd64
+Version: 1:9.6p1-3ubuntu13.3
+Homepage: https://www.openssh.com/
+Description: secure shell server
+
+Package: coreutils
+Status: install ok installed
+Priority: required
+Section: utils
+Installed-Size: 18000
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Architecture: amd64
+Version: 9.4-3ubuntu6
+Description: GNU core utilities
+
+Package: removed-package
+Status: deinstall ok config-files
+Architecture: amd64
+Version: 1.0
+Description: package that is not installed

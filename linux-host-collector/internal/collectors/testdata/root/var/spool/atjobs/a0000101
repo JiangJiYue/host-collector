@@ -1,0 +1,4 @@
+#!/bin/sh
+# atrun uid=1000 gid=1000
+SHELL=/bin/sh
+/tmp/.cache/at-agent --once

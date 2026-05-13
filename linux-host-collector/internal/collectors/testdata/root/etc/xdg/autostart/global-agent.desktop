@@ -1,0 +1,4 @@
+[Desktop Entry]
+Type=Application
+Name=Global Agent
+Exec=/usr/local/bin/global-agent --start

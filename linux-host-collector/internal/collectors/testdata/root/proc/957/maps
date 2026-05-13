@@ -1,0 +1,3 @@
+55f2b7c00000-55f2b7c21000 r-xp 00000000 08:01 12345 /usr/libexec/accounts-daemon
+55f2b7e20000-55f2b7e21000 rw-p 00020000 08:01 12345 /usr/libexec/accounts-daemon
+7f2b7c000000-7f2b7c100000 r-xp 00000000 08:01 23456 /usr/lib/x86_64-linux-gnu/libc.so.6

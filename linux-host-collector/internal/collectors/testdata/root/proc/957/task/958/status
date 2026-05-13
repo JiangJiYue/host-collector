@@ -1,0 +1,7 @@
+Name:	gmain
+State:	S (sleeping)
+Tgid:	957
+Pid:	958
+PPid:	1
+voluntary_ctxt_switches:	20
+nonvoluntary_ctxt_switches:	1
