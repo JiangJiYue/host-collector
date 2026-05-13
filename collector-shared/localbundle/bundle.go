@@ -107,7 +107,7 @@ func Write(dir string, bundle Bundle) error {
 
 func scopeAllowsDomain(scope []string, domain string) bool {
 	if len(scope) == 0 {
-		return true
+		return false
 	}
 	for _, item := range scope {
 		if item == domain {

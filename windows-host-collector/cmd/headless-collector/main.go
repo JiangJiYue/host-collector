@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"collector-shared/appcore"
@@ -31,17 +30,23 @@ func main() {
 		}
 		return
 	}
-	utils.InitLogger(headlessLogDir(), utils.INFO)
-	if err := client.EnsureElevated(); err != nil {
-		fmt.Fprintf(os.Stderr, "管理员提权失败: %v\n", err)
-		utils.LogError("headless", "管理员提权失败: %v", err)
-		os.Exit(2)
-	}
-	if err := runScan([]string{"--output-dir", "."}); err != nil {
+	if err := runDefaultNoArgs(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		utils.LogError("headless", "%s", err)
 		os.Exit(1)
 	}
+}
+
+func runDefaultNoArgs() error {
+	utils.InitLogger("", utils.INFO)
+	if err := client.EnsureElevated(); err != nil {
+		utils.LogError("headless", "管理员提权失败: %v", err)
+		return fmt.Errorf("管理员提权失败: %v", err)
+	}
+	if err := runScan([]string{}); err != nil {
+		utils.LogError("headless", "%s", err)
+		return err
+	}
+	return nil
 }
 
 func run(args []string) error {
@@ -200,16 +205,6 @@ func statusState(value string) appcore.StatusState {
 	default:
 		return appcore.StatusState(value)
 	}
-}
-
-func headlessLogDir() string {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return ""
-	}
-	dir := filepath.Join(home, ".host-collector")
-	_ = os.MkdirAll(dir, 0700)
-	return dir
 }
 
 func defaultAgentID() string {

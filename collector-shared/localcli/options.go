@@ -20,6 +20,9 @@ type Resolved struct {
 
 func Resolve(options Options) (Resolved, error) {
 	includeValue := strings.TrimSpace(options.Include)
+	if includeValue == "" {
+		return Resolved{}, fmt.Errorf("--include is required; explicitly list domains to collect")
+	}
 	include, err := ParseScopeList(includeValue)
 	if err != nil {
 		return Resolved{}, err

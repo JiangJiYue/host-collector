@@ -322,6 +322,20 @@ func TestHeadlessOSSLocalPassesDaysToScannerPolicyWindow(t *testing.T) {
 	}
 }
 
+func TestHeadlessMainWithoutArgsDoesNotWriteHomeLogFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	err := runDefaultNoArgs()
+	if err == nil {
+		t.Fatalf("expected default no-args run to require explicit include and output-dir")
+	}
+
+	if _, err := os.Stat(filepath.Join(home, ".host-collector")); !os.IsNotExist(err) {
+		t.Fatalf("default local scan should not create home log directory, stat err=%v", err)
+	}
+}
+
 func readJSONFile(t *testing.T, path string, target any) {
 	t.Helper()
 	data, err := os.ReadFile(path)

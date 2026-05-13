@@ -57,7 +57,7 @@ func TestWriteBundleWritesOnlyManifestAndSections(t *testing.T) {
 	}
 }
 
-func TestWriteBundleAlwaysWritesJSONSections(t *testing.T) {
+func TestWriteBundleDoesNotWriteSectionsWithoutCollectionScope(t *testing.T) {
 	dir := t.TempDir()
 	err := Write(dir, Bundle{
 		Metadata: runmode.OutputMetadata{RunMode: runmode.ModeOSSLocal},
@@ -69,8 +69,8 @@ func TestWriteBundleAlwaysWritesJSONSections(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "manifest.json")); err != nil {
 		t.Fatalf("expected manifest: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "sections", "host.json")); err != nil {
-		t.Fatalf("expected host section: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "sections", "host.json")); !os.IsNotExist(err) {
+		t.Fatalf("host section should not be written without explicit collection scope")
 	}
 	assertOnlyManifestAndSections(t, dir)
 }

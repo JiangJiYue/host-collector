@@ -2,6 +2,7 @@ package localcli
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ func TestResolveScopeAppliesExcludeAfterInclude(t *testing.T) {
 }
 
 func TestResolveDefaultsDaysToSevenAndRejectsUnsupportedDays(t *testing.T) {
-	resolved, err := Resolve(Options{})
+	resolved, err := Resolve(Options{Include: "host"})
 	if err != nil {
 		t.Fatalf("resolve defaults: %v", err)
 	}
@@ -41,8 +42,18 @@ func TestResolveDefaultsDaysToSevenAndRejectsUnsupportedDays(t *testing.T) {
 	}
 
 	for _, days := range []int{1, 15, 60} {
-		if _, err := Resolve(Options{Days: days}); err == nil {
+		if _, err := Resolve(Options{Include: "host", Days: days}); err == nil {
 			t.Fatalf("expected days=%d to fail", days)
 		}
+	}
+}
+
+func TestResolveRequiresExplicitIncludeAllowlist(t *testing.T) {
+	_, err := Resolve(Options{Exclude: "network", Days: 7})
+	if err == nil {
+		t.Fatalf("expected missing include to fail")
+	}
+	if !strings.Contains(err.Error(), "--include") {
+		t.Fatalf("expected include error, got %v", err)
 	}
 }
