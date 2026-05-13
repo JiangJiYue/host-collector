@@ -42,19 +42,19 @@ func TestRecorderStoresIndependentEventSnapshots(t *testing.T) {
 
 func TestNopSinkAcceptsStatusEvents(t *testing.T) {
 	var sink StatusSink = NopSink{}
-	sink.EmitStatus(StatusEvent{Type: EventUploadProgress, StageKey: "upload", State: StateRunning})
+	sink.EmitStatus(StatusEvent{Type: EventOutputProgress, StageKey: "output", State: StateRunning})
 }
 
-func TestUploadProgressEventUsesSharedUploadStage(t *testing.T) {
-	event := UploadProgressEvent("encrypting", 1, 3)
+func TestOutputProgressEventUsesSharedOutputStage(t *testing.T) {
+	event := OutputProgressEvent("writing_sections", 1, 3)
 
-	if event.Type != EventUploadProgress {
+	if event.Type != EventOutputProgress {
 		t.Fatalf("unexpected type: %#v", event)
 	}
-	if event.StageKey != "upload" || event.StageName != "上传" || event.State != StateRunning {
-		t.Fatalf("unexpected upload stage: %#v", event)
+	if event.StageKey != "output" || event.StageName != "本地输出" || event.State != StateRunning {
+		t.Fatalf("unexpected output stage: %#v", event)
 	}
-	if event.Current != 1 || event.Total != 3 || event.Attributes["step"] != "encrypting" {
+	if event.Current != 1 || event.Total != 3 || event.Attributes["step"] != "writing_sections" {
 		t.Fatalf("unexpected progress fields: %#v", event)
 	}
 }
@@ -102,12 +102,12 @@ func TestScanFailureAndCompletionEventsCarryIdentityAttributes(t *testing.T) {
 		ScanID:   "scan-1",
 		ScanType: "policy",
 		Duration: 1500 * time.Millisecond,
-		Uploaded: true,
+		Written:  true,
 	})
 	if completion.Type != EventScanCompleted || completion.State != StateCompleted || completion.Message != "completed" {
 		t.Fatalf("unexpected completion event: %#v", completion)
 	}
-	if completion.Attributes["duration"] != (1500*time.Millisecond).String() || completion.Attributes["uploaded"] != strconv.FormatBool(true) {
+	if completion.Attributes["duration"] != (1500*time.Millisecond).String() || completion.Attributes["written"] != strconv.FormatBool(true) {
 		t.Fatalf("unexpected completion attributes: %#v", completion.Attributes)
 	}
 }

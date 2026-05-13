@@ -13,7 +13,6 @@ import (
 	"collector-shared/localcli"
 	"collector-shared/localoutputdir"
 	"collector-shared/runmode"
-	"collector-shared/upload"
 	"windows-host-collector/client"
 	"windows-host-collector/models"
 	"windows-host-collector/scanner"
@@ -125,7 +124,7 @@ func runOSSLocal(options ossLocalOptions) error {
 		CollectionScope: cliOptions.Scope,
 		ToolVersion:     buildVersion,
 	}
-	sections, err := upload.NormalizePayloadMap(result)
+	sections, err := localbundle.NormalizeSections(result)
 	if err != nil {
 		return err
 	}

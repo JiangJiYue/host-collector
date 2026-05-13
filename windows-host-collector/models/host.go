@@ -48,7 +48,7 @@ type HardwareInfo struct {
 	Disks       []string `json:"disks"`
 }
 
-// HostProfile 是系统采集器返回的内部聚合结构，统一上传载荷由 ScanEnvelope 表示。
+// HostProfile 是系统采集器返回的内部聚合结构，统一结果载荷由 ScanEnvelope 表示。
 type HostProfile struct {
 	Identity  HostIdentityInfo  `json:"identity"`
 	Resources ResourceUsageInfo `json:"resources"`

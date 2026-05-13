@@ -6,7 +6,6 @@ import (
 
 	"collector-shared/appcore"
 	"collector-shared/orchestration"
-	sharedUpload "collector-shared/upload"
 	"linux-host-collector/internal/collectors/accounts"
 	"linux-host-collector/internal/collectors/envvars"
 	"linux-host-collector/internal/collectors/filesystem"
@@ -230,21 +229,12 @@ func RunLocalScan(config Config) (Result, error) {
 
 	sections["platform"] = "linux"
 	envelope := ScanEnvelope{
-		ProtocolVersion: sharedUpload.ProtocolVersionUploadItemsV1,
+		ProtocolVersion: "local-sections-v1",
 		Platform:        "linux",
 		Sections:        sections,
 	}
 
-	items, err := sharedUpload.PlanLinuxItems(sections, sharedUpload.Metadata{
-		AgentID:     config.AgentID,
-		ScanID:      config.ScanID,
-		ScanType:    "local",
-		CollectedAt: collectedAt,
-	})
-	if err != nil {
-		return Result{}, err
-	}
-	return Result{Envelope: envelope, UploadItems: items}, nil
+	return Result{Envelope: envelope}, nil
 }
 
 func scanWindowStart(collectedAt time.Time, days int) time.Time {

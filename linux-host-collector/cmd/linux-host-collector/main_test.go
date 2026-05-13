@@ -23,7 +23,7 @@ func TestRunVersionDoesNotRequireRoot(t *testing.T) {
 	}
 }
 
-func TestRunWithoutCommandDefaultsToUploadWorkflow(t *testing.T) {
+func TestRunWithoutCommandDefaultsToLocalScanWorkflow(t *testing.T) {
 	withEffectiveUID(t, 0)
 
 	err := run(nil)

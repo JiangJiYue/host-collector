@@ -34,7 +34,7 @@ type ScanEnvelope struct {
 	ForensicDiagnostics    filesystem.CollectorDiagnostics `json:"forensicDiagnostics,omitempty"`
 }
 
-// QuickScanData 保留为兼容别名，上传载荷统一使用 ScanEnvelope。
+// QuickScanData 保留为兼容别名，本地结果载荷统一使用 ScanEnvelope。
 type QuickScanData = ScanEnvelope
 
 // NetworkData 网络数据

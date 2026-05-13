@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"collector-shared/appcore"
-	"collector-shared/upload"
 )
 
 type Config struct {
@@ -25,6 +24,5 @@ type ScanEnvelope struct {
 }
 
 type Result struct {
-	Envelope    ScanEnvelope  `json:"envelope"`
-	UploadItems []upload.Item `json:"uploadItems"`
+	Envelope ScanEnvelope `json:"envelope"`
 }

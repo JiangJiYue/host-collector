@@ -9,7 +9,7 @@ const (
 	ErrorTimeout           ErrorCode = "timeout"
 	ErrorCanceled          ErrorCode = "canceled"
 	ErrorInvalidPayload    ErrorCode = "invalid_payload"
-	ErrorUploadFailed      ErrorCode = "upload_failed"
+	ErrorOutputFailed      ErrorCode = "output_failed"
 )
 
 type CollectorError struct {

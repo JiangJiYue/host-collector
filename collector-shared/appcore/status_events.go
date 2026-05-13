@@ -10,7 +10,7 @@ type ScanStatusSummary struct {
 	ScanID   string
 	ScanType string
 	Duration time.Duration
-	Uploaded bool
+	Written  bool
 }
 
 type ScanProgressSummary struct {
@@ -38,11 +38,11 @@ func ScanProgressEvent(summary ScanProgressSummary) StatusEvent {
 	}
 }
 
-func UploadProgressEvent(step string, current int, total int) StatusEvent {
+func OutputProgressEvent(step string, current int, total int) StatusEvent {
 	return StatusEvent{
-		Type:      EventUploadProgress,
-		StageKey:  "upload",
-		StageName: "上传",
+		Type:      EventOutputProgress,
+		StageKey:  "output",
+		StageName: "本地输出",
 		State:     StateRunning,
 		Current:   current,
 		Total:     total,
@@ -73,7 +73,7 @@ func ScanCompletionEvent(summary ScanStatusSummary) StatusEvent {
 			"scanId":   summary.ScanID,
 			"scanType": summary.ScanType,
 			"duration": summary.Duration.String(),
-			"uploaded": strconv.FormatBool(summary.Uploaded),
+			"written":  strconv.FormatBool(summary.Written),
 		},
 	}
 }

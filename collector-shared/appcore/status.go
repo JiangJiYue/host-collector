@@ -7,7 +7,7 @@ type EventType string
 const (
 	EventScanStarted    EventType = "scan_started"
 	EventScanProgress   EventType = "scan_progress"
-	EventUploadProgress EventType = "upload_progress"
+	EventOutputProgress EventType = "output_progress"
 	EventScanCompleted  EventType = "scan_completed"
 	EventScanFailed     EventType = "scan_failed"
 	EventRuntimeWarning EventType = "runtime_warning"

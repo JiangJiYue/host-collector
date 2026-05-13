@@ -12,7 +12,7 @@ import (
 	"linux-host-collector/internal/collectors/weblogs"
 )
 
-func TestRunLocalScanBuildsSectionsAndUploadItemPlan(t *testing.T) {
+func TestRunLocalScanBuildsSections(t *testing.T) {
 	result, err := RunLocalScan(Config{
 		Root:    filepath.Join("..", "collectors", "testdata", "root"),
 		GoArch:  "amd64",
@@ -28,11 +28,8 @@ func TestRunLocalScanBuildsSectionsAndUploadItemPlan(t *testing.T) {
 	if result.Envelope.Sections["users"] == nil {
 		t.Fatalf("expected users section")
 	}
-	if len(result.UploadItems) == 0 {
-		t.Fatalf("expected upload item plan")
-	}
-	if result.UploadItems[0].ItemID != "host" {
-		t.Fatalf("expected host upload item first, got %#v", result.UploadItems[0])
+	if result.Envelope.ProtocolVersion != "local-sections-v1" {
+		t.Fatalf("expected local sections protocol, got %#v", result.Envelope.ProtocolVersion)
 	}
 }
 
@@ -103,9 +100,6 @@ func TestRunLocalScanHonorsHostOnlyScope(t *testing.T) {
 			t.Fatalf("did not expect %s section in host-only scan", section)
 		}
 	}
-	if got := uploadItemIDs(result); len(got) != 2 || got[0] != "host" || got[1] != "diagnostics" {
-		t.Fatalf("expected host and diagnostics upload items, got %#v", got)
-	}
 }
 
 func assertHasProgress(t *testing.T, events []appcore.StatusEvent, stageKey string, state appcore.StatusState) {
@@ -146,9 +140,6 @@ func TestRunLocalScanHonorsProcessOnlyScope(t *testing.T) {
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
 	}
-	if got := uploadItemIDs(result); len(got) != 2 || got[0] != "process" || got[1] != "file_identity" {
-		t.Fatalf("expected process and file identity upload items, got %#v", got)
-	}
 }
 
 func TestRunLocalScanHonorsNetworkOnlyScope(t *testing.T) {
@@ -172,9 +163,6 @@ func TestRunLocalScanHonorsNetworkOnlyScope(t *testing.T) {
 	}
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
-	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "network" {
-		t.Fatalf("expected only network upload item, got %#v", got)
 	}
 }
 
@@ -202,9 +190,6 @@ func TestRunLocalScanHonorsStartupOnlyScope(t *testing.T) {
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
 	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "startup" {
-		t.Fatalf("expected only startup upload item, got %#v", got)
-	}
 }
 
 func TestRunLocalScanHonorsLogsOnlyScope(t *testing.T) {
@@ -231,9 +216,6 @@ func TestRunLocalScanHonorsLogsOnlyScope(t *testing.T) {
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
 	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "logs" {
-		t.Fatalf("expected only logs upload item, got %#v", got)
-	}
 }
 
 func TestRunLocalScanHonorsSoftwareOnlyScope(t *testing.T) {
@@ -257,9 +239,6 @@ func TestRunLocalScanHonorsSoftwareOnlyScope(t *testing.T) {
 	}
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
-	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "software" {
-		t.Fatalf("expected only software upload item, got %#v", got)
 	}
 }
 
@@ -285,9 +264,6 @@ func TestRunLocalScanHonorsEnvVarsOnlyScope(t *testing.T) {
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
 	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "env_vars" {
-		t.Fatalf("expected only env_vars upload item, got %#v", got)
-	}
 }
 
 func TestRunLocalScanHonorsUserTracesOnlyScope(t *testing.T) {
@@ -312,9 +288,6 @@ func TestRunLocalScanHonorsUserTracesOnlyScope(t *testing.T) {
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
 	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "operation_records" {
-		t.Fatalf("expected only operation_records upload item, got %#v", got)
-	}
 }
 
 func TestRunLocalScanHonorsWebLogsOnlyScope(t *testing.T) {
@@ -338,9 +311,6 @@ func TestRunLocalScanHonorsWebLogsOnlyScope(t *testing.T) {
 		if _, exists := result.Envelope.Sections[section]; exists {
 			t.Fatalf("did not expect %s section in web-logs-only scan", section)
 		}
-	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "web_logs" {
-		t.Fatalf("expected only web_logs upload item, got %#v", got)
 	}
 }
 
@@ -369,9 +339,6 @@ func TestRunLocalScanHonorsTimelineOnlyScope(t *testing.T) {
 	}
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
-	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "timeline" {
-		t.Fatalf("expected only timeline upload item, got %#v", got)
 	}
 }
 
@@ -443,17 +410,6 @@ func TestRunLocalScanHonorsFileSystemOnlyScope(t *testing.T) {
 	if result.Envelope.Sections["platform"] != "linux" {
 		t.Fatalf("expected platform marker")
 	}
-	if got := uploadItemIDs(result); len(got) != 1 || got[0] != "file_system" {
-		t.Fatalf("expected only file_system upload item, got %#v", got)
-	}
-}
-
-func uploadItemIDs(result Result) []string {
-	ids := make([]string, 0, len(result.UploadItems))
-	for _, item := range result.UploadItems {
-		ids = append(ids, item.ItemID)
-	}
-	return ids
 }
 
 func findLinuxLogEvent(events []logs.Event, eventType string) *logs.Event {
