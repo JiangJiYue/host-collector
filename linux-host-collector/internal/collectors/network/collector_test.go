@@ -1,6 +1,7 @@
 package network
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -90,6 +91,52 @@ func TestCollectParsesProcNetTCPAndUDP(t *testing.T) {
 	}
 }
 
+func TestCollectParsesRuntimeNetworkSnapshots(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "run", "host-collector", "runtime", "iptables-save.v4"), "*filter\n-A INPUT -p tcp --dport 2222 -j ACCEPT\nCOMMIT\n")
+	mustWrite(t, filepath.Join(root, "run", "host-collector", "runtime", "nft-list-ruleset.txt"), "table inet filter { chain input { tcp dport 22 drop } }\n")
+	mustWrite(t, filepath.Join(root, "run", "host-collector", "runtime", "ip-route.txt"), "default via 10.0.0.1 dev eth0 proto dhcp metric 100\n10.0.0.0/24 dev eth0 proto kernel scope link src 10.0.0.2\n")
+	mustWrite(t, filepath.Join(root, "run", "host-collector", "runtime", "ip-rule.txt"), "100: from 10.0.0.0/24 lookup 100\n")
+	mustWrite(t, filepath.Join(root, "run", "systemd", "resolve", "cache.txt"), "example.test A 10.0.0.9 ttl=120\n")
+	mustWrite(t, filepath.Join(root, "var", "lib", "misc", "dnsmasq.leases"), "1710000000 aa:bb:cc:dd:ee:ff 10.0.0.20 host1 01:aa\n")
+
+	result, err := Collect(root)
+	if err != nil {
+		t.Fatalf("collect runtime network: %v", err)
+	}
+
+	for _, source := range []string{
+		filepath.Join("run", "host-collector", "runtime", "iptables-save.v4"),
+		filepath.Join("run", "host-collector", "runtime", "nft-list-ruleset.txt"),
+		filepath.Join("run", "host-collector", "runtime", "ip-route.txt"),
+		filepath.Join("run", "host-collector", "runtime", "ip-rule.txt"),
+		filepath.Join("run", "systemd", "resolve", "cache.txt"),
+		filepath.Join("var", "lib", "misc", "dnsmasq.leases"),
+	} {
+		if !containsString(result.Sources, source) {
+			t.Fatalf("expected runtime source %s in %#v", source, result.Sources)
+		}
+	}
+	runtimeRule := findFirewallRule(t, result.FirewallRules, "INPUT", "ACCEPT")
+	if runtimeRule.SourceType != "runtime" || runtimeRule.DestinationPort != "2222" {
+		t.Fatalf("unexpected runtime iptables rule: %#v", runtimeRule)
+	}
+	nftRule := findFirewallRule(t, result.FirewallRules, "input", "drop")
+	if nftRule.SourceType != "runtime" || nftRule.Table != "filter" || nftRule.Protocol != "tcp" || nftRule.DestinationPort != "22" {
+		t.Fatalf("unexpected nft runtime rule: %#v", nftRule)
+	}
+	runtimeRoute := findRoute(t, result.Routes, "0.0.0.0/0")
+	if runtimeRoute.SourceType != "runtime" || runtimeRoute.Gateway != "10.0.0.1" {
+		t.Fatalf("unexpected runtime route: %#v", runtimeRoute)
+	}
+	if result.PolicyRules[0].SourceType != "runtime" {
+		t.Fatalf("expected runtime policy rule, got %#v", result.PolicyRules)
+	}
+	if len(result.DNSCache) != 2 {
+		t.Fatalf("expected runtime dns cache records, got %#v", result.DNSCache)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -130,6 +177,16 @@ func findFirewallRule(t *testing.T, rules []FirewallRule, chain string, action s
 	}
 	t.Fatalf("expected firewall rule %s/%s in %#v", chain, action, rules)
 	return FirewallRule{}
+}
+
+func mustWrite(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
 }
 
 func TestCollectToleratesMissingProcNetFiles(t *testing.T) {

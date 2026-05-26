@@ -3,10 +3,12 @@
 package collector
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +100,40 @@ func TestSAMAccountRecordToSourceIncludesSemanticEvidence(t *testing.T) {
 	}
 }
 
+func TestOpenSAMKeyUsesBackupAccessMask(t *testing.T) {
+	got := samBackupOpenAccessMask(registry.QUERY_VALUE)
+	if got&regsamBackupRead != regsamBackupRead {
+		t.Fatalf("expected backup read bits in access mask %#x", got)
+	}
+	if got&registry.QUERY_VALUE != registry.QUERY_VALUE {
+		t.Fatalf("expected requested query value bit in access mask %#x", got)
+	}
+}
+
+func TestWindowsSAMAccountProviderCollectsLiveEvidenceWhenEnabled(t *testing.T) {
+	if os.Getenv("HOST_COLLECTOR_LIVE_SAM_TEST") != "1" {
+		t.Skip("set HOST_COLLECTOR_LIVE_SAM_TEST=1 to read live SAM hive")
+	}
+
+	records, err := windowsSAMAccountProvider{}.collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect SAM records: %v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("expected at least one SAM account record")
+	}
+	hasRID500 := false
+	for _, record := range records {
+		if record.RID != nil && *record.RID == 500 {
+			hasRID500 = true
+			break
+		}
+	}
+	if !hasRID500 {
+		t.Fatalf("expected SAM records to include RID 500, got %#v", records)
+	}
+}
+
 func TestCombineCleanupError(t *testing.T) {
 	mainErr := errors.New("load failed")
 	cleanupErr := errors.New("restore failed")
@@ -119,6 +155,19 @@ func TestCombineCleanupError(t *testing.T) {
 	}
 	if !errors.Is(got, cleanupErr) {
 		t.Fatalf("expected cleanup-only error to match cleanup error, got %v", got)
+	}
+}
+
+func TestSAMCleanupWarningDoesNotDiscardSources(t *testing.T) {
+	sources, err := samSourcesFromRecordsWithCleanup([]samAccountRecord{
+		{Username: "Administrator", RID: 500, RIDKey: true},
+	}, errors.New("cleanup failed"))
+
+	if err != nil {
+		t.Fatalf("expected cleanup warning not to fail SAM collection, got %v", err)
+	}
+	if len(sources) != 1 || sources[0].Username != "Administrator" {
+		t.Fatalf("expected SAM sources to be preserved, got %#v", sources)
 	}
 }
 

@@ -18,6 +18,8 @@ const (
 	statusBufferOverflow     = 0x80000005
 	statusBufferTooSmall     = 0xC0000023
 	statusInfoLengthMismatch = 0xC0000004
+
+	maxHandleObjectNameChars = 4096
 )
 
 var procNtQueryObject = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryObject")
@@ -90,7 +92,7 @@ func queryObjectUnicodeString(handle windows.Handle, infoClass uintptr) (string,
 
 		switch uint32(status) {
 		case statusSuccess:
-			return decodeNTUnicodeString(buf), nil
+			return decodeNTUnicodeString(buf, maxHandleObjectNameChars), nil
 		case statusBufferOverflow, statusBufferTooSmall, statusInfoLengthMismatch:
 			if returnLen <= bufSize {
 				returnLen = bufSize * 2
@@ -108,7 +110,7 @@ func queryObjectUnicodeString(handle windows.Handle, infoClass uintptr) (string,
 	return "", syscall.ERROR_INSUFFICIENT_BUFFER
 }
 
-func decodeNTUnicodeString(buf []byte) string {
+func decodeNTUnicodeString(buf []byte, maxChars int) string {
 	if len(buf) < int(unsafe.Sizeof(ntUnicodeString{})) {
 		return ""
 	}
@@ -117,7 +119,21 @@ func decodeNTUnicodeString(buf []byte) string {
 	if value.Buffer == nil || value.Length == 0 {
 		return ""
 	}
+	if value.Length > value.MaximumLength {
+		return ""
+	}
+	charCount := int(value.Length / 2)
+	if maxChars > 0 && charCount > maxChars {
+		return ""
+	}
+	bufferStart := uintptr(unsafe.Pointer(&buf[0]))
+	bufferEnd := bufferStart + uintptr(len(buf))
+	valueStart := uintptr(unsafe.Pointer(value.Buffer))
+	valueEnd := valueStart + uintptr(value.Length)
+	if valueStart < bufferStart || valueEnd < valueStart || valueEnd > bufferEnd {
+		return ""
+	}
 
-	chars := unsafe.Slice(value.Buffer, value.Length/2)
+	chars := unsafe.Slice(value.Buffer, charCount)
 	return syscall.UTF16ToString(chars)
 }

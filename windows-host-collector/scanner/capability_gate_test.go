@@ -9,7 +9,7 @@ import (
 	"windows-host-collector/models"
 )
 
-func TestStageCapabilityGateSkipsWin7PrefetchAndKeepsEventLogs(t *testing.T) {
+func TestStageCapabilityGateRunsWin7PrefetchAndKeepsEventLogs(t *testing.T) {
 	profile := capabilities.DeriveWindowsProfile(capabilities.WindowsFacts{
 		MajorVersion: 6,
 		MinorVersion: 1,
@@ -18,16 +18,58 @@ func TestStageCapabilityGateSkipsWin7PrefetchAndKeepsEventLogs(t *testing.T) {
 		Architecture: "amd64",
 	})
 
-	if decision := stageCapabilityDecision("prefetch", profile); decision.Run {
-		t.Fatalf("expected Win7 prefetch to be skipped")
-	} else if !strings.Contains(decision.Detail, "prefetch_win10_layout") {
-		t.Fatalf("expected missing capability in detail, got %q", decision.Detail)
-	} else if decision.Evidence != "windows_7_or_server_2008_r2:legacy_prefetch_layout" {
-		t.Fatalf("expected structured prefetch evidence, got %#v", decision)
+	if decision := stageCapabilityDecision("prefetch", profile); !decision.Run {
+		t.Fatalf("expected Win7 prefetch to run with version-aware parser, got %#v", decision)
 	}
 
 	if decision := stageCapabilityDecision("event_logs", profile); !decision.Run {
 		t.Fatalf("expected Win7 event logs to remain enabled, got %q", decision.Detail)
+	}
+}
+
+func TestStageCapabilityGateSkipsPrefetchWhenRuntimeProbeUnavailable(t *testing.T) {
+	profile := capabilities.DeriveWindowsProfile(capabilities.WindowsFacts{
+		MajorVersion:     10,
+		MinorVersion:     0,
+		BuildNumber:      20348,
+		ProductName:      "Windows Server 2022 Standard",
+		InstallationType: "Server",
+		Architecture:     "amd64",
+		CapabilityProbes: map[capabilities.Capability]capabilities.ProbeStatus{
+			capabilities.CapabilityPrefetchWin10Layout: {
+				Supported: false,
+				Reason:    "prefetch_unavailable",
+				Evidence:  "prefetch_directory_missing_or_disabled",
+			},
+		},
+	})
+
+	decision := stageCapabilityDecision("prefetch", profile)
+	if decision.Run {
+		t.Fatalf("expected prefetch stage to skip when runtime probe marks it unavailable")
+	}
+	if decision.ReasonCode != "missing_capability" ||
+		decision.Capability != capabilities.CapabilityPrefetchWin10Layout ||
+		decision.Evidence != "prefetch_directory_missing_or_disabled:prefetch_unavailable" {
+		t.Fatalf("expected explicit Prefetch unavailable diagnostic, got %#v", decision)
+	}
+}
+
+func TestReportPrefetchEmptyResultAddsDiagnostic(t *testing.T) {
+	scanner := NewQuickScanner().WithScope([]string{"user_traces"})
+
+	scanner.reportPrefetchEmptyResult()
+	diagnostics := scanner.stageDiagnosticsSnapshot()
+
+	if len(diagnostics) != 1 {
+		t.Fatalf("expected one prefetch diagnostic, got %#v", diagnostics)
+	}
+	diagnostic := diagnostics[0]
+	if diagnostic.Stage != "prefetch" ||
+		diagnostic.State != string(models.StageCompleted) ||
+		diagnostic.ReasonCode != "empty_result" ||
+		diagnostic.Evidence != "no_prefetch_files" {
+		t.Fatalf("unexpected prefetch empty diagnostic: %#v", diagnostic)
 	}
 }
 
@@ -132,7 +174,7 @@ func TestQuickScannerEmitsPlatformProfileAndCapabilityDiagnostics(t *testing.T) 
 	if !ok {
 		t.Fatalf("expected prefetch capability status, got %#v", data.PlatformProfile.CapabilityStatuses)
 	}
-	if status["supported"] != false || status["reason"] != "legacy_prefetch_layout" {
+	if status["supported"] != true || status["reason"] != "available" {
 		t.Fatalf("unexpected prefetch capability status: %#v", status)
 	}
 
@@ -143,14 +185,8 @@ func TestQuickScannerEmitsPlatformProfileAndCapabilityDiagnostics(t *testing.T) 
 			break
 		}
 	}
-	if prefetchDiagnostic == nil {
-		t.Fatalf("expected prefetch stage diagnostic, got %#v", data.StageDiagnostics)
-	}
-	if prefetchDiagnostic.State != string(models.StageSkipped) ||
-		prefetchDiagnostic.ReasonCode != "missing_capability" ||
-		prefetchDiagnostic.Capability != string(capabilities.CapabilityPrefetchWin10Layout) ||
-		prefetchDiagnostic.Evidence != "windows_7_or_server_2008_r2:legacy_prefetch_layout" {
-		t.Fatalf("unexpected prefetch diagnostic: %#v", prefetchDiagnostic)
+	if prefetchDiagnostic != nil && prefetchDiagnostic.State == string(models.StageSkipped) {
+		t.Fatalf("did not expect prefetch missing-capability diagnostic for Win7 SP1, got %#v", prefetchDiagnostic)
 	}
 }
 

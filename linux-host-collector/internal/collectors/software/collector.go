@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,6 +38,18 @@ func Collect(root string) (Result, error) {
 	if err := collectRpmSnapshot(root, &result); err != nil {
 		return Result{}, err
 	}
+	if err := collectApkInstalled(root, &result); err != nil {
+		return Result{}, err
+	}
+	if err := collectPacmanLocal(root, &result); err != nil {
+		return Result{}, err
+	}
+	if err := collectSnapPackages(root, &result); err != nil {
+		return Result{}, err
+	}
+	if err := collectFlatpakApps(root, &result); err != nil {
+		return Result{}, err
+	}
 	if err := enrichFromAptHistory(root, &result); err != nil {
 		return Result{}, err
 	}
@@ -53,6 +66,226 @@ func Collect(root string) (Result, error) {
 	})
 	sort.Strings(result.Sources)
 	return result, nil
+}
+
+func collectApkInstalled(root string, result *Result) error {
+	relativePath := filepath.Join("lib", "apk", "db", "installed")
+	records, err := readApkInstalled(filepath.Join(root, relativePath))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, fields := range records {
+		if fields["P"] == "" {
+			continue
+		}
+		result.Packages = append(result.Packages, Package{
+			Name:            fields["P"],
+			Version:         fields["V"],
+			InstallLocation: relativePath,
+			Size:            fields["S"] + " B",
+			PackageManager:  "apk",
+			Architecture:    fields["A"],
+			Status:          "installed",
+			Source:          relativePath,
+			Platform:        "linux",
+		})
+	}
+	if len(records) > 0 {
+		result.Sources = append(result.Sources, relativePath)
+	}
+	return nil
+}
+
+func readApkInstalled(path string) ([]map[string]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var records []map[string]string
+	current := map[string]string{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			if len(current) > 0 {
+				records = append(records, current)
+				current = map[string]string{}
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if ok {
+			current[key] = value
+		}
+	}
+	if len(current) > 0 {
+		records = append(records, current)
+	}
+	return records, scanner.Err()
+}
+
+func collectPacmanLocal(root string, result *Result) error {
+	base := filepath.Join(root, "var", "lib", "pacman", "local")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		relativePath := filepath.Join("var", "lib", "pacman", "local", entry.Name(), "desc")
+		fields, err := readPacmanDesc(filepath.Join(root, relativePath))
+		if err != nil {
+			continue
+		}
+		if fields["NAME"] == "" {
+			continue
+		}
+		result.Packages = append(result.Packages, Package{
+			Name:            fields["NAME"],
+			Version:         fields["VERSION"],
+			Publisher:       fields["PACKAGER"],
+			InstallLocation: relativePath,
+			InstallDate:     parseUnixTimestamp(fields["INSTALLDATE"]),
+			PackageManager:  "pacman",
+			Architecture:    fields["ARCH"],
+			Status:          "installed",
+			Source:          relativePath,
+			Platform:        "linux",
+		})
+		result.Sources = append(result.Sources, relativePath)
+	}
+	return nil
+}
+
+func readPacmanDesc(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]string{}
+	lines := strings.Split(string(data), "\n")
+	for index := 0; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
+		if !strings.HasPrefix(line, "%") || !strings.HasSuffix(line, "%") || index+1 >= len(lines) {
+			continue
+		}
+		key := strings.Trim(line, "%")
+		index++
+		fields[key] = strings.TrimSpace(lines[index])
+	}
+	return fields, nil
+}
+
+func collectSnapPackages(root string, result *Result) error {
+	base := filepath.Join(root, "var", "lib", "snapd", "snaps")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".snap") {
+			continue
+		}
+		nameVersion := strings.TrimSuffix(entry.Name(), ".snap")
+		name, version, ok := strings.Cut(nameVersion, "_")
+		if !ok {
+			name = nameVersion
+		}
+		relativePath := filepath.Join("var", "lib", "snapd", "snaps", entry.Name())
+		result.Packages = append(result.Packages, Package{
+			Name:            name,
+			Version:         version,
+			InstallLocation: relativePath,
+			PackageManager:  "snap",
+			Status:          "installed",
+			Source:          relativePath,
+			Platform:        "linux",
+		})
+		result.Sources = append(result.Sources, relativePath)
+	}
+	return nil
+}
+
+func collectFlatpakApps(root string, result *Result) error {
+	base := filepath.Join(root, "var", "lib", "flatpak", "app")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		relativePath := filepath.Join("var", "lib", "flatpak", "app", entry.Name(), "current", "active", "metadata")
+		fields, _ := readFlatpakMetadata(filepath.Join(root, relativePath))
+		result.Packages = append(result.Packages, Package{
+			Name:            firstNonEmpty(fields["name"], entry.Name()),
+			Version:         fields["version"],
+			InstallLocation: relativePath,
+			PackageManager:  "flatpak",
+			Architecture:    flatpakArch(fields["runtime"]),
+			Status:          "installed",
+			Source:          relativePath,
+			Platform:        "linux",
+		})
+		result.Sources = append(result.Sources, relativePath)
+	}
+	return nil
+}
+
+func readFlatpakMetadata(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]string{}, err
+	}
+	fields := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok {
+			fields[key] = value
+		}
+	}
+	return fields, nil
+}
+
+func parseUnixTimestamp(value string) string {
+	seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || seconds <= 0 {
+		return ""
+	}
+	return time.Unix(seconds, 0).UTC().Format(time.RFC3339)
+}
+
+func flatpakArch(runtime string) string {
+	parts := strings.Split(runtime, "/")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func enrichFromDpkgLog(root string, result *Result) error {

@@ -99,9 +99,10 @@ func TestWebLogCollectorFiltersEntriesOutsideTimeWindow(t *testing.T) {
 			MaxDepth:          2,
 			MaxFilesPerRoot:   10,
 			MaxTotalFiles:     10,
-			MaxSampleBytes:    4096,
+			MaxSampleBytes:    300 * 1024 * 1024,
 			AllowedExtensions: []string{".log", ".txt"},
 		}).
+		WithFullModeThresholds(1, 0).
 		WithTimeWindow(mustParseRFC3339(t, "2026-04-20T00:00:00Z")).
 		Collect(context.Background())
 	if err != nil {
@@ -117,6 +118,56 @@ func TestWebLogCollectorFiltersEntriesOutsideTimeWindow(t *testing.T) {
 	}
 	if webResult.Entries[0].URI != "/inside" {
 		t.Fatalf("expected inside-window entry to remain, got %#v", webResult.Entries[0])
+	}
+}
+
+func TestWebLogCollectorKeepsSmallLogsFullDespiteTimeWindow(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "nginx", "logs")
+	confDir := filepath.Join(root, "nginx", "conf")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		t.Fatalf("mkdir conf dir: %v", err)
+	}
+
+	logPath := filepath.Join(logDir, "access.log")
+	logBody := strings.Join([]string{
+		`1.2.3.4 - - [21/Apr/2026:12:01:02 +0800] "GET /inside HTTP/1.1" 200 1234 "-" "curl/8.0"`,
+		`1.2.3.4 - - [26/Feb/2024:23:01:14 +0800] "GET /old-hack168$ HTTP/1.1" 200 1234 "-" "curl/8.0"`,
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(logBody), 0o644); err != nil {
+		t.Fatalf("write access log: %v", err)
+	}
+
+	confPath := filepath.Join(confDir, "nginx.conf")
+	confBody := "events {}\nhttp {\n  access_log " + filepath.ToSlash(logPath) + ";\n}\n"
+	if err := os.WriteFile(confPath, []byte(confBody), 0o644); err != nil {
+		t.Fatalf("write nginx conf: %v", err)
+	}
+
+	result, err := NewWebLogCollector().
+		WithDiscoveryInputs(webLogDiscoveryInputs{NginxConfigs: []string{confPath}}).
+		WithScanOptions(webLogScanOptions{
+			MaxDepth:          2,
+			MaxFilesPerRoot:   10,
+			MaxTotalFiles:     10,
+			MaxSampleBytes:    4096,
+			AllowedExtensions: []string{".log", ".txt"},
+		}).
+		WithTimeWindow(mustParseRFC3339(t, "2026-04-20T00:00:00Z")).
+		Collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect web logs: %v", err)
+	}
+
+	webResult := result.(*WebLogCollectionResult)
+	if len(webResult.Entries) != 2 {
+		t.Fatalf("expected small web log to be collected fully, got %#v", webResult.Entries)
+	}
+	if webResult.CollectionPlan == nil || webResult.CollectionPlan.Mode != "full" {
+		t.Fatalf("expected full collection plan, got %#v", webResult.CollectionPlan)
 	}
 }
 
@@ -179,6 +230,131 @@ func TestNewWebLogCollectorDiscoversPhpStudyNginxConfigByDefault(t *testing.T) {
 	}
 	if webResult.Entries[0].URI != "/phpstudy" {
 		t.Fatalf("unexpected parsed entry: %#v", webResult.Entries[0])
+	}
+}
+
+func TestWebLogCollectorDiscoversPhpStudyDefaultAccessLogsAndSkipsErrorLogs(t *testing.T) {
+	root := t.TempDir()
+	phpStudyRoot := filepath.Join(root, "phpstudy_pro")
+	apacheLogDir := filepath.Join(phpStudyRoot, "Extensions", "Apache2.4.39", "logs")
+	nginxLogDir := filepath.Join(phpStudyRoot, "Extensions", "Nginx1.15.11", "logs")
+	if err := os.MkdirAll(apacheLogDir, 0o755); err != nil {
+		t.Fatalf("mkdir apache log dir: %v", err)
+	}
+	if err := os.MkdirAll(nginxLogDir, 0o755); err != nil {
+		t.Fatalf("mkdir nginx log dir: %v", err)
+	}
+
+	files := map[string]string{
+		filepath.Join(apacheLogDir, "access.log"):          "",
+		filepath.Join(apacheLogDir, "access.log.20260523"): `127.0.0.1 - - [09/May/2026:08:00:01 +0000] "GET /phpstudy HTTP/1.1" 200 123 "-" "curl/8"` + "\n",
+		filepath.Join(apacheLogDir, "error.log"):           "[Mon Feb 26 23:01:14.000000 2024] [php7:error] [pid 1234] webshell touched hack168$\n",
+		filepath.Join(nginxLogDir, "access.log"):           "",
+		filepath.Join(nginxLogDir, "error.log"):            "",
+	}
+	for path, body := range files {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	SetWebLogDiscoveryOverridesForTesting(WebLogDiscoveryOverrideConfig{
+		ScanOptions: WebLogScanOverrideConfig{
+			MaxDepth:          1,
+			MaxFilesPerRoot:   10,
+			MaxTotalFiles:     10,
+			MaxSampleBytes:    4096,
+			AllowedExtensions: []string{".log", ".txt", ".20260523"},
+		},
+	})
+	defer SetWebLogDiscoveryOverridesForTesting(WebLogDiscoveryOverrideConfig{})
+	setWebLogDiscoveryRootsForTesting([]string{root})
+	defer setWebLogDiscoveryRootsForTesting(nil)
+
+	result, err := NewWebLogCollector().Collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect web logs: %v", err)
+	}
+	webResult := result.(*WebLogCollectionResult)
+
+	if len(webResult.Sources) != 3 {
+		t.Fatalf("expected phpStudy default access log sources only, got %#v", webResult.Sources)
+	}
+	sourcePaths := make([]string, 0, len(webResult.Sources))
+	for _, source := range webResult.Sources {
+		sourcePaths = append(sourcePaths, source.Path)
+		if !containsStringWebLog(source.Evidence, "PHPSTUDY_DEFAULT_LOG_PATH") {
+			t.Fatalf("expected phpStudy default evidence on source %#v", source)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(apacheLogDir, "access.log"),
+		filepath.Join(apacheLogDir, "access.log.20260523"),
+		filepath.Join(nginxLogDir, "access.log"),
+	} {
+		if !containsStringWebLog(sourcePaths, filepath.Clean(path)) {
+			t.Fatalf("expected source path %q in %#v", path, sourcePaths)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(apacheLogDir, "error.log"),
+		filepath.Join(nginxLogDir, "error.log"),
+	} {
+		if containsStringWebLog(sourcePaths, filepath.Clean(path)) {
+			t.Fatalf("did not expect error log source path %q in %#v", path, sourcePaths)
+		}
+	}
+
+	if len(webResult.Entries) != 1 {
+		t.Fatalf("expected one access entry for rotated access log, got %#v", webResult.Entries)
+	}
+	if webResult.Entries[0].Method != "GET" || webResult.Entries[0].URI != "/phpstudy" {
+		t.Fatalf("expected parsed access log entry, got %#v", webResult.Entries[0])
+	}
+}
+
+func TestWebLogCollectorParsesPhpStudyRotatedCommonAccessLog(t *testing.T) {
+	root := t.TempDir()
+	apacheLogDir := filepath.Join(root, "phpstudy_pro", "Extensions", "Apache2.4.39", "logs")
+	if err := os.MkdirAll(apacheLogDir, 0o755); err != nil {
+		t.Fatalf("mkdir apache log dir: %v", err)
+	}
+	logPath := filepath.Join(apacheLogDir, "access.log.1708905600")
+	logBody := strings.Join([]string{
+		`::1 - - [26/Feb/2024:22:24:20 +0800] "GET / HTTP/1.1" 302 -`,
+		`::1 - - [26/Feb/2024:22:24:20 +0800] "GET /install.php HTTP/1.1" 200 8321`,
+		`::1 - - [26/Feb/2024:22:25:32 +0800] "POST /install.php?action=install HTTP/1.1" 200 1302`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(logPath, []byte(logBody), 0o644); err != nil {
+		t.Fatalf("write rotated access log: %v", err)
+	}
+
+	SetWebLogDiscoveryOverridesForTesting(WebLogDiscoveryOverrideConfig{
+		ScanOptions: WebLogScanOverrideConfig{
+			MaxDepth:          1,
+			MaxFilesPerRoot:   10,
+			MaxTotalFiles:     10,
+			MaxSampleBytes:    4096,
+			AllowedExtensions: []string{".log", ".txt"},
+		},
+	})
+	defer SetWebLogDiscoveryOverridesForTesting(WebLogDiscoveryOverrideConfig{})
+	setWebLogDiscoveryRootsForTesting([]string{root})
+	defer setWebLogDiscoveryRootsForTesting(nil)
+
+	result, err := NewWebLogCollector().Collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect web logs: %v", err)
+	}
+	webResult := result.(*WebLogCollectionResult)
+	if len(webResult.Sources) != 1 {
+		t.Fatalf("expected rotated access source, got %#v", webResult.Sources)
+	}
+	if len(webResult.Entries) != 3 {
+		t.Fatalf("expected common access entries from rotated log, got %#v", webResult.Entries)
+	}
+	if webResult.Entries[1].URI != "/install.php" || webResult.Entries[1].BytesSent != 8321 {
+		t.Fatalf("expected install.php entry, got %#v", webResult.Entries[1])
 	}
 }
 

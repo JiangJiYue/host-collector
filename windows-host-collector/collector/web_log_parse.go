@@ -11,7 +11,8 @@ import (
 	"windows-host-collector/models"
 )
 
-var combinedLogPattern = regexp.MustCompile(`^(\S+) \S+ \S+ \[([^\]]+)\] "([A-Z]+) ([^ ]+) ([^"]+)" (\d{3}) (\d+|-) "([^"]*)" "([^"]*)"$`)
+var combinedLogPattern = regexp.MustCompile(`^(\S+) \S+ \S+ \[([^\]]+)\] "([A-Z]+) ([^ ]+) ([^"]+)" (\d{3}) (\d+|-)(?: "([^"]*)" "([^"]*)")?(?: \S+)?$`)
+var forwardedTimedLogPattern = regexp.MustCompile(`^(\S+) (\S+) (\S+) \S+ \S+ \[([^\]]+)\] "([A-Z]+) ([^ ]+) ([^"]+)" (\d{3}) (\d+|-)(?: "([^"]*)" "([^"]*)")?(?: \S+)?$`)
 
 func parseWebLogLine(sourceID string, source webLogSourceCandidate, state webLogParseState, line string) (models.WebLogEntry, webLogParseState, bool) {
 	line = strings.TrimSpace(line)
@@ -40,6 +41,23 @@ func parseWebLogLine(sourceID string, source webLogSourceCandidate, state webLog
 	if state.Format == webLogFormatJSONAccess {
 		entry, ok := parseJSONAccessLine(sourceID, source, line)
 		return entry, state, ok
+	}
+
+	if state.Format == webLogFormatRaw {
+		return models.WebLogEntry{
+			SourceID:    sourceID,
+			Method:      "RAW",
+			URI:         line,
+			ServerType:  source.ServerType,
+			SiteName:    source.SiteName,
+			ProcessName: source.ProcessName,
+			ProcessPID:  source.ProcessPID,
+			Raw:         line,
+		}, state, true
+	}
+
+	if looksLikeAccessLogLine(line) {
+		return rawWebLogEntry(sourceID, source, line), state, true
 	}
 
 	return models.WebLogEntry{}, state, false
@@ -88,6 +106,9 @@ func parseIISW3CLine(sourceID string, source webLogSourceCandidate, fields []str
 }
 
 func parseCombinedLine(sourceID string, source webLogSourceCandidate, line string) (models.WebLogEntry, bool) {
+	if entry, ok := parseForwardedTimedLine(sourceID, source, line); ok {
+		return entry, true
+	}
 	matches := combinedLogPattern.FindStringSubmatch(line)
 	if len(matches) != 10 {
 		return models.WebLogEntry{}, false
@@ -101,18 +122,9 @@ func parseCombinedLine(sourceID string, source webLogSourceCandidate, line strin
 	if err != nil {
 		return models.WebLogEntry{}, false
 	}
-	timestamp, err := time.Parse("02/Jan/2006:15:04:05 -0700", matches[2])
-	if err != nil {
-		timestamp = time.Time{}
-	}
-	normalizedTimestamp := matches[2]
-	if !timestamp.IsZero() {
-		normalizedTimestamp = timestamp.Format(time.RFC3339)
-	}
-
 	return models.WebLogEntry{
 		SourceID:    sourceID,
-		Timestamp:   normalizedTimestamp,
+		Timestamp:   normalizeApacheTimestamp(matches[2]),
 		ClientIP:    matches[1],
 		Method:      matches[3],
 		URI:         matches[4],
@@ -126,6 +138,77 @@ func parseCombinedLine(sourceID string, source webLogSourceCandidate, line strin
 		ProcessName: source.ProcessName,
 		ProcessPID:  source.ProcessPID,
 	}, true
+}
+
+func parseForwardedTimedLine(sourceID string, source webLogSourceCandidate, line string) (models.WebLogEntry, bool) {
+	matches := forwardedTimedLogPattern.FindStringSubmatch(line)
+	if len(matches) != 12 {
+		return models.WebLogEntry{}, false
+	}
+
+	status, err := strconv.Atoi(matches[8])
+	if err != nil {
+		return models.WebLogEntry{}, false
+	}
+	bytesSent, err := strconv.ParseInt(strings.ReplaceAll(matches[9], "-", "0"), 10, 64)
+	if err != nil {
+		return models.WebLogEntry{}, false
+	}
+	timestamp := normalizeApacheTimestamp(matches[4])
+	clientIP := normalizeDash(matches[3])
+	if clientIP == "" {
+		clientIP = normalizeDash(matches[2])
+	}
+
+	return models.WebLogEntry{
+		SourceID:    sourceID,
+		Timestamp:   timestamp,
+		ClientIP:    clientIP,
+		Method:      matches[5],
+		URI:         matches[6],
+		Protocol:    matches[7],
+		Status:      status,
+		BytesSent:   bytesSent,
+		Referer:     normalizeDash(matches[10]),
+		UserAgent:   normalizeDash(matches[11]),
+		Host:        normalizeDash(matches[1]),
+		ServerType:  source.ServerType,
+		SiteName:    source.SiteName,
+		ProcessName: source.ProcessName,
+		ProcessPID:  source.ProcessPID,
+	}, true
+}
+
+func normalizeApacheTimestamp(value string) string {
+	timestamp, err := time.Parse("02/Jan/2006:15:04:05 -0700", value)
+	if err != nil {
+		return value
+	}
+	return timestamp.Format(time.RFC3339)
+}
+
+func looksLikeAccessLogLine(line string) bool {
+	return strings.Contains(line, " ") &&
+		(strings.Contains(line, "GET ") ||
+			strings.Contains(line, "POST ") ||
+			strings.Contains(line, "PUT ") ||
+			strings.Contains(line, "DELETE ") ||
+			strings.Contains(line, "PATCH ") ||
+			strings.Contains(line, "HEAD ") ||
+			strings.Contains(line, "OPTIONS "))
+}
+
+func rawWebLogEntry(sourceID string, source webLogSourceCandidate, line string) models.WebLogEntry {
+	return models.WebLogEntry{
+		SourceID:    sourceID,
+		Method:      "RAW",
+		URI:         line,
+		ServerType:  source.ServerType,
+		SiteName:    source.SiteName,
+		ProcessName: source.ProcessName,
+		ProcessPID:  source.ProcessPID,
+		Raw:         line,
+	}
 }
 
 func parseJSONAccessLine(sourceID string, source webLogSourceCandidate, line string) (models.WebLogEntry, bool) {

@@ -4,6 +4,7 @@ package capabilities
 
 import (
 	"errors"
+	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -67,9 +68,10 @@ func detectCapabilityProbes(facts WindowsFacts) map[Capability]ProbeStatus {
 
 func detectCoreCapabilityProbes() map[Capability]ProbeStatus {
 	return map[Capability]ProbeStatus{
-		CapabilityWMI:         probeWMI(),
-		CapabilityEventLogAPI: probeEventLogAPI(),
-		CapabilityRegistry:    probeRegistry(),
+		CapabilityWMI:                 probeWMI(),
+		CapabilityEventLogAPI:         probeEventLogAPI(),
+		CapabilityRegistry:            probeRegistry(),
+		CapabilityPrefetchWin10Layout: probePrefetch(),
 	}
 }
 
@@ -99,6 +101,24 @@ func probeRegistry() ProbeStatus {
 	}
 	key.Close()
 	return ProbeStatus{Supported: true, Reason: "available", Evidence: "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"}
+}
+
+func probePrefetch() ProbeStatus {
+	const prefetchDir = `C:\Windows\Prefetch`
+	info, err := os.Stat(prefetchDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ProbeStatus{Supported: false, Reason: "prefetch_unavailable", Evidence: "prefetch_directory_missing_or_disabled"}
+		}
+		if errors.Is(err, os.ErrPermission) {
+			return ProbeStatus{Supported: false, Reason: "permission_denied", Evidence: prefetchDir}
+		}
+		return ProbeStatus{Supported: false, Reason: "prefetch_unavailable", Evidence: compactProbeError(err)}
+	}
+	if !info.IsDir() {
+		return ProbeStatus{Supported: false, Reason: "prefetch_unavailable", Evidence: "prefetch_path_not_directory"}
+	}
+	return ProbeStatus{Supported: true, Reason: "available", Evidence: prefetchDir}
 }
 
 func eventLogProbeReason(err error) string {

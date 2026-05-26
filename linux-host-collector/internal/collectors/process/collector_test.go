@@ -271,8 +271,91 @@ func TestCollectLinuxProcessContainerOwnershipFromCgroup(t *testing.T) {
 	if proc.Container.Orchestrator != "kubernetes" || proc.Container.PodUID != "123" {
 		t.Fatalf("expected kubernetes pod ownership, got %#v", proc.Container)
 	}
+	if proc.Container.MetadataState != "unavailable" || proc.Container.MetadataReason == "" {
+		t.Fatalf("expected explicit metadata degradation, got %#v", proc.Container)
+	}
 	if !containsString(proc.RiskTags, "container_process") {
 		t.Fatalf("expected container process risk tag, got %#v", proc.RiskTags)
+	}
+}
+
+func TestCollectLinuxProcessContainerMetadataFromDockerConfig(t *testing.T) {
+	root := t.TempDir()
+	procDir := filepath.Join(root, "proc", "301")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("create proc dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc", "stat"), []byte("btime 1700000000\n"), 0o644); err != nil {
+		t.Fatalf("write proc stat: %v", err)
+	}
+	status := "Name:\tnginx\nPid:\t301\nPPid:\t1\nUid:\t0\t0\t0\t0\nThreads:\t1\n"
+	if err := os.WriteFile(filepath.Join(procDir, "status"), []byte(status), 0o644); err != nil {
+		t.Fatalf("write status: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(procDir, "cmdline"), []byte("nginx"), 0o644); err != nil {
+		t.Fatalf("write cmdline: %v", err)
+	}
+	containerID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(filepath.Join(procDir, "cgroup"), []byte("0::/docker/"+containerID+"\n"), 0o644); err != nil {
+		t.Fatalf("write cgroup: %v", err)
+	}
+	configPath := filepath.Join(root, "var", "lib", "docker", "containers", containerID, "config.v2.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create docker config dir: %v", err)
+	}
+	config := `{"Name":"/web","Config":{"Image":"nginx:1.25"}}`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write docker config: %v", err)
+	}
+
+	result, err := Collect(root)
+	if err != nil {
+		t.Fatalf("collect processes: %v", err)
+	}
+	proc := findProcess(result.Processes, 301)
+	if proc == nil {
+		t.Fatalf("expected process 301, got %#v", result.Processes)
+	}
+	if proc.Container.MetadataState != "available" || proc.Container.Name != "web" || proc.Container.Image != "nginx:1.25" {
+		t.Fatalf("expected docker metadata, got %#v", proc.Container)
+	}
+}
+
+func TestCollectLinuxProcessContainerOwnershipFromCrioCgroup(t *testing.T) {
+	root := t.TempDir()
+	procDir := filepath.Join(root, "proc", "302")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("create proc dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc", "stat"), []byte("btime 1700000000\n"), 0o644); err != nil {
+		t.Fatalf("write proc stat: %v", err)
+	}
+	status := "Name:\tworker\nPid:\t302\nPPid:\t1\nUid:\t0\t0\t0\t0\nThreads:\t1\n"
+	if err := os.WriteFile(filepath.Join(procDir, "status"), []byte(status), 0o644); err != nil {
+		t.Fatalf("write status: %v", err)
+	}
+	containerID := "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	cgroup := "0::/kubepods.slice/kubepods-pod4d81_7b0f.slice/crio-" + containerID + ".scope\n"
+	if err := os.WriteFile(filepath.Join(procDir, "cgroup"), []byte(cgroup), 0o644); err != nil {
+		t.Fatalf("write cgroup: %v", err)
+	}
+
+	result, err := Collect(root)
+	if err != nil {
+		t.Fatalf("collect processes: %v", err)
+	}
+	proc := findProcess(result.Processes, 302)
+	if proc == nil {
+		t.Fatalf("expected process 302, got %#v", result.Processes)
+	}
+	if proc.Container.Runtime != "cri-o" || proc.Container.ID != containerID {
+		t.Fatalf("expected cri-o ownership from cgroup, got %#v", proc.Container)
+	}
+	if proc.Container.Orchestrator != "kubernetes" || proc.Container.PodUID != "4d81-7b0f" {
+		t.Fatalf("expected kubernetes pod ownership, got %#v", proc.Container)
+	}
+	if proc.Container.MetadataState != "unavailable" || proc.Container.MetadataReason != "crio_metadata_requires_runtime_access" {
+		t.Fatalf("expected cri-o metadata degradation, got %#v", proc.Container)
 	}
 }
 

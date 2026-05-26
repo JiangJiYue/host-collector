@@ -7,6 +7,7 @@ const (
 	webLogFormatIISW3C     webLogFormat = "iisW3C"
 	webLogFormatCombined   webLogFormat = "combined"
 	webLogFormatJSONAccess webLogFormat = "jsonAccess"
+	webLogFormatRaw        webLogFormat = "raw"
 )
 
 type webLogConfidence string

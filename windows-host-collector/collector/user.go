@@ -21,7 +21,7 @@ func (uc *UserCollector) Name() string {
 
 // UserCollectionResult 用户采集结果
 type UserCollectionResult struct {
-	Users   []models.LocalUserAccount   `json:"users"`
+	Users   []models.LocalUserAccount    `json:"users"`
 	EnvVars []models.EnvironmentVariable `json:"envVars"`
 }
 
@@ -100,14 +100,14 @@ func (uc *UserCollector) collectUsers(ctx context.Context) ([]models.LocalUserAc
 func (uc *UserCollector) getMockUsers() []models.LocalUserAccount {
 	return []models.LocalUserAccount{
 		{
-			ID:            "user-1",
-			Username:      "Administrator",
-			Privilege:     "Administrator",
-			Comment:       utils.StringPtr("Built-in account for admin"),
-			LoginFailures: 0,
+			ID:             "user-1",
+			Username:       "Administrator",
+			Privilege:      "Administrator",
+			Comment:        utils.StringPtr("Built-in account for admin"),
+			LoginFailures:  0,
 			LoginSuccesses: 15,
-			LocalGroups:   []string{"Administrators"},
-			GlobalGroups:  []string{},
+			LocalGroups:    []string{"Administrators"},
+			GlobalGroups:   []string{},
 		},
 	}
 }

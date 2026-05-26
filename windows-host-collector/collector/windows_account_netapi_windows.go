@@ -86,13 +86,13 @@ type netUserInfo struct {
 	Comment    *string
 	ScriptPath *string
 
-	Priv       uint32
-	Flags      uint32
-	LastLogon  uint32
+	Priv        uint32
+	Flags       uint32
+	LastLogon   uint32
 	AcctExpires uint32
-	BadPwCount uint32
-	NumLogons  uint32
-	UserID     uint32
+	BadPwCount  uint32
+	NumLogons   uint32
+	UserID      uint32
 }
 
 var (

@@ -202,18 +202,6 @@ func mergeRecordIntoAggregate(agg *accountAggregate, rec accountSourceRecord) {
 }
 
 func applyShadowDetection(agg *accountAggregate, bundle accountSourceBundle) {
-	if bundle.SAMErr != nil {
-		status, confidence, reasons, evidence := samUncheckedShadow(bundle.SAMErr)
-		agg.account.Shadow = models.ShadowAccountDetection{
-			IsShadowAccount: false,
-			Status:          status,
-			Confidence:      confidence,
-			Reasons:         reasons,
-			Evidence:        evidence,
-		}
-		return
-	}
-
 	hasSAM := hasSource(agg.sourceSet, accountSourceSAM)
 	hasNetAPI := hasSource(agg.sourceSet, accountSourceNetAPI)
 	hasWMI := hasSource(agg.sourceSet, accountSourceWMI)
@@ -227,6 +215,15 @@ func applyShadowDetection(agg *accountAggregate, bundle accountSourceBundle) {
 	netCommandCheckComplete := !netCommandFailed && netCommandSnapshotAvailable
 	confirmed := false
 	suspicious := false
+	if bundle.SAMErr != nil {
+		_, _, reasons, evidence := samUncheckedShadow(bundle.SAMErr)
+		for _, reason := range reasons {
+			addReason(agg.reasonSet, reason)
+		}
+		for _, item := range evidence {
+			addEvidence(agg.evidenceSet, item)
+		}
+	}
 
 	if apiChecksComplete && hasSAM && !hasNetAPI && !hasWMI {
 		addReason(agg.reasonSet, shadowReasonSAMOnly)
@@ -252,7 +249,7 @@ func applyShadowDetection(agg *accountAggregate, bundle accountSourceBundle) {
 			suspicious = true
 		}
 	}
-	if apiChecksComplete && hasNetAPI != hasWMI {
+	if bundle.SAMErr == nil && apiChecksComplete && (hasNetAPI || hasWMI) && hasNetAPI != hasWMI {
 		addReason(agg.reasonSet, shadowReasonSourceMismatch)
 		if !confirmed {
 			suspicious = true
@@ -265,6 +262,18 @@ func applyShadowDetection(agg *accountAggregate, bundle accountSourceBundle) {
 		} else if !confirmed {
 			suspicious = true
 		}
+	}
+	if bundle.SAMErr != nil && hasDollarSuffixLocalAccount(agg.account) {
+		addReason(agg.reasonSet, shadowReasonDollarSuffixLocalAccount)
+		suspicious = true
+	}
+	if bundle.SAMErr != nil && isAdminGroupMember(agg.account) && !isBuiltinLocalAccount(agg.account) {
+		addReason(agg.reasonSet, shadowReasonAdminGroupMember)
+		suspicious = true
+	}
+	if netCommandCheckComplete && bundle.SAMErr != nil && (hasNetAPI || hasWMI) && !hasNetCommand && !isBuiltinLocalAccount(agg.account) {
+		addReason(agg.reasonSet, shadowReasonNetCommandInvisible)
+		suspicious = true
 	}
 
 	reasons := sortedSetValues(agg.reasonSet)
@@ -287,11 +296,15 @@ func applyShadowDetection(agg *accountAggregate, bundle accountSourceBundle) {
 			Evidence:        evidence,
 		}
 	default:
+		status := shadowStatusClean
+		if bundle.SAMErr != nil {
+			status = shadowStatusUnchecked
+		}
 		agg.account.Shadow = models.ShadowAccountDetection{
 			IsShadowAccount: false,
-			Status:          shadowStatusClean,
+			Status:          status,
 			Confidence:      shadowConfidenceNone,
-			Reasons:         []string{},
+			Reasons:         reasons,
 			Evidence:        evidence,
 		}
 	}
@@ -343,6 +356,30 @@ func isBuiltinLocalAccount(account models.LocalUserAccount) bool {
 	default:
 		return false
 	}
+}
+
+func hasDollarSuffixLocalAccount(account models.LocalUserAccount) bool {
+	username := strings.TrimSpace(account.Username)
+	if !strings.HasSuffix(username, "$") {
+		return false
+	}
+	if isBuiltinLocalAccount(account) {
+		return false
+	}
+	if account.RID != nil && *account.RID < 1000 {
+		return false
+	}
+	return true
+}
+
+func isAdminGroupMember(account models.LocalUserAccount) bool {
+	for _, group := range account.LocalGroups {
+		normalized := strings.ToLower(strings.TrimSpace(group))
+		if normalized == "administrators" || strings.HasSuffix(normalized, `\administrators`) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeSAMEvidence(dst *models.SAMAccountEvidence, src *models.SAMAccountEvidence) {
@@ -456,6 +493,14 @@ func addReason(reasonSet map[string]struct{}, reason string) {
 		return
 	}
 	reasonSet[reason] = struct{}{}
+}
+
+func addEvidence(evidenceSet map[string]struct{}, evidence string) {
+	evidence = strings.TrimSpace(evidence)
+	if evidence == "" {
+		return
+	}
+	evidenceSet[evidence] = struct{}{}
 }
 
 func orderedSources(set map[string]struct{}) []string {

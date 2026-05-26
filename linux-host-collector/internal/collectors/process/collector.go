@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"os"
 	pathpkg "path"
@@ -70,11 +71,15 @@ type Process struct {
 }
 
 type ContainerContext struct {
-	ID           string `json:"id,omitempty"`
-	Runtime      string `json:"runtime,omitempty"`
-	Orchestrator string `json:"orchestrator,omitempty"`
-	PodUID       string `json:"podUid,omitempty"`
-	RawCgroup    string `json:"rawCgroup,omitempty"`
+	ID             string `json:"id,omitempty"`
+	Runtime        string `json:"runtime,omitempty"`
+	Name           string `json:"name,omitempty"`
+	Image          string `json:"image,omitempty"`
+	Orchestrator   string `json:"orchestrator,omitempty"`
+	PodUID         string `json:"podUid,omitempty"`
+	RawCgroup      string `json:"rawCgroup,omitempty"`
+	MetadataState  string `json:"metadataState,omitempty"`
+	MetadataReason string `json:"metadataReason,omitempty"`
 }
 
 type EnvironmentVariable struct {
@@ -244,7 +249,7 @@ func readProcess(root string, dir string, fallbackPID int, users map[string]stri
 	baseAddress, is64Bit := processMapProfile(filepath.Join(dir, "maps"))
 	createdAt := processCreatedAt(root, statFields["starttime"])
 	cgroups := readCgroups(filepath.Join(dir, "cgroup"))
-	container := containerContextFromCgroups(cgroups)
+	container := containerContextFromCgroups(root, cgroups)
 	return Process{
 		PID:                pid,
 		PPID:               ppid,
@@ -465,14 +470,71 @@ func readCgroups(path string) []string {
 	return rows
 }
 
-func containerContextFromCgroups(cgroups []string) ContainerContext {
+func containerContextFromCgroups(root string, cgroups []string) ContainerContext {
 	for _, row := range cgroups {
 		context := parseContainerCgroup(row)
 		if context.ID != "" {
-			return context
+			return enrichContainerMetadata(root, context)
 		}
 	}
 	return ContainerContext{}
+}
+
+func enrichContainerMetadata(root string, context ContainerContext) ContainerContext {
+	if context.ID == "" {
+		return context
+	}
+	if context.Runtime == "docker" {
+		if docker, ok := readDockerContainerConfig(root, context.ID); ok {
+			if docker.Name != "" {
+				context.Name = docker.Name
+			}
+			if docker.Image != "" {
+				context.Image = docker.Image
+			}
+			context.MetadataState = "available"
+			return context
+		}
+	}
+	context.MetadataState = "unavailable"
+	context.MetadataReason = containerMetadataUnavailableReason(context.Runtime)
+	return context
+}
+
+type dockerContainerConfig struct {
+	Name   string
+	Config struct {
+		Image string
+	}
+}
+
+func readDockerContainerConfig(root string, containerID string) (ContainerContext, bool) {
+	data, err := os.ReadFile(filepath.Join(root, "var", "lib", "docker", "containers", containerID, "config.v2.json"))
+	if err != nil {
+		return ContainerContext{}, false
+	}
+	var config dockerContainerConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return ContainerContext{}, false
+	}
+	context := ContainerContext{
+		Name:  strings.TrimPrefix(config.Name, "/"),
+		Image: config.Config.Image,
+	}
+	return context, context.Name != "" || context.Image != ""
+}
+
+func containerMetadataUnavailableReason(runtime string) string {
+	switch runtime {
+	case "docker":
+		return "docker_metadata_not_found"
+	case "containerd":
+		return "containerd_metadata_requires_runtime_access"
+	case "cri-o":
+		return "crio_metadata_requires_runtime_access"
+	default:
+		return "runtime_metadata_not_found"
+	}
 }
 
 func parseContainerCgroup(row string) ContainerContext {
@@ -490,6 +552,9 @@ func parseContainerCgroup(row string) ContainerContext {
 	case strings.Contains(path, "cri-containerd-"):
 		context.Runtime = "containerd"
 		context.ID = hexContainerIDAfter(path, "cri-containerd-")
+	case strings.Contains(path, "crio-"):
+		context.Runtime = "cri-o"
+		context.ID = hexContainerIDAfter(path, "crio-")
 	case strings.Contains(path, "docker-"):
 		context.Runtime = "docker"
 		context.ID = hexContainerIDAfter(path, "docker-")

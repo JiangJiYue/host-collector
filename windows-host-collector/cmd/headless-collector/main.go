@@ -76,7 +76,10 @@ func runScan(args []string) error {
 		*agentID = defaultAgentID()
 	}
 	if *scanID == "" {
-		*scanID = appcore.FormatScanID(time.Now())
+		*scanID = appcore.NewScanID(time.Now())
+	}
+	if !appcore.ValidScanID(*scanID) {
+		return fmt.Errorf("invalid scan id %q", *scanID)
 	}
 	*outputDir = localoutputdir.Resolve(*outputDir, *scanID)
 	return runOSSLocal(ossLocalOptions{

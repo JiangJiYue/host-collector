@@ -20,7 +20,7 @@ func TestHeadlessOSSLocalWritesSectionsOnly(t *testing.T) {
 		"--include", "host,process",
 		"--output-dir", outputDir,
 		"--agent-id", "agent-win-1",
-		"--scan-id", "scan-win-1",
+		"--scan-id", "20260526-120000-abcdef12",
 	})
 	if err != nil {
 		t.Fatalf("run headless oss local: %v", err)
@@ -43,7 +43,7 @@ func TestHeadlessOSSLocalScanCommandAcceptsOutputDir(t *testing.T) {
 		"--days", "7",
 		"--output-dir", outputDir,
 		"--agent-id", "agent-win-1",
-		"--scan-id", "scan-win-1",
+		"--scan-id", "20260526-120000-abcdef12",
 	})
 	if err != nil {
 		t.Fatalf("run headless oss local scan command: %v", err)
@@ -94,7 +94,7 @@ func TestHeadlessOSSLocalScanCommandPrintsProgressToStdout(t *testing.T) {
 			"--include", "host",
 			"--output-dir", outputDir,
 			"--agent-id", "agent-win-1",
-			"--scan-id", "scan-win-1",
+			"--scan-id", "20260526-120000-abcdef12",
 		})
 		if err != nil {
 			t.Fatalf("run headless oss local scan command: %v", err)
@@ -105,6 +105,21 @@ func TestHeadlessOSSLocalScanCommandPrintsProgressToStdout(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("expected stdout to contain %q, got:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestHeadlessScanRejectsInvalidScanIDBeforeOutputResolution(t *testing.T) {
+	err := run([]string{
+		"scan",
+		"--include", "host",
+		"--output-dir", filepath.Join(t.TempDir(), "out"),
+		"--scan-id", "../escape",
+	})
+	if err == nil {
+		t.Fatalf("expected invalid scan id error")
+	}
+	if !strings.Contains(err.Error(), "invalid scan id") {
+		t.Fatalf("expected invalid scan id error, got %v", err)
 	}
 }
 
@@ -129,14 +144,14 @@ func TestHeadlessOSSLocalDotOutputDirCreatesScanSubdirectory(t *testing.T) {
 			"--include", "host",
 			"--output-dir", ".",
 			"--agent-id", "agent-win-1",
-			"--scan-id", "scan-win-1",
+			"--scan-id", "20260526-120000-abcdef12",
 		})
 		if err != nil {
 			t.Fatalf("run headless oss local scan command: %v", err)
 		}
 	})
 
-	expectedDir := filepath.Join(baseDir, "host-collector-scan-win-1")
+	expectedDir := filepath.Join(baseDir, "host-collector-20260526-120000-abcdef12")
 	if _, err := os.Stat(filepath.Join(expectedDir, "manifest.json")); err != nil {
 		t.Fatalf("expected manifest in auto output directory: %v", err)
 	}
@@ -155,7 +170,7 @@ func TestHeadlessOSSLocalWritesSectionsOnlyDirectory(t *testing.T) {
 		"--include", "host,process",
 		"--output-dir", outputDir,
 		"--agent-id", "agent-win-1",
-		"--scan-id", "scan-win-1",
+		"--scan-id", "20260526-120000-abcdef12",
 	})
 	if err != nil {
 		t.Fatalf("run headless oss local: %v", err)
@@ -182,7 +197,7 @@ func TestHeadlessOSSLocalWritesHeavySectionsOnlyWhenIncluded(t *testing.T) {
 		"--include", "host",
 		"--output-dir", hostOnlyDir,
 		"--agent-id", "agent-win-1",
-		"--scan-id", "scan-win-host",
+		"--scan-id", "20260526-120001-abcdef12",
 	}); err != nil {
 		t.Fatalf("run host-only oss-local: %v", err)
 	}
@@ -198,7 +213,7 @@ func TestHeadlessOSSLocalWritesHeavySectionsOnlyWhenIncluded(t *testing.T) {
 		"--include", "registry,file_system",
 		"--output-dir", heavyDir,
 		"--agent-id", "agent-win-1",
-		"--scan-id", "scan-win-heavy",
+		"--scan-id", "20260526-120002-abcdef12",
 	}); err != nil {
 		t.Fatalf("run heavy oss-local: %v", err)
 	}
@@ -227,7 +242,7 @@ func TestHeadlessOSSLocalWritesUserTracesOnlyWhenIncluded(t *testing.T) {
 		"--include", "host",
 		"--output-dir", hostOnlyDir,
 		"--agent-id", "agent-win-1",
-		"--scan-id", "scan-win-host",
+		"--scan-id", "20260526-120001-abcdef12",
 	}); err != nil {
 		t.Fatalf("run host-only oss-local: %v", err)
 	}
@@ -241,7 +256,7 @@ func TestHeadlessOSSLocalWritesUserTracesOnlyWhenIncluded(t *testing.T) {
 		"--include", "user_traces",
 		"--output-dir", userTracesDir,
 		"--agent-id", "agent-win-1",
-		"--scan-id", "scan-win-user-traces",
+		"--scan-id", "20260526-120003-abcdef12",
 	}); err != nil {
 		t.Fatalf("run user_traces oss-local: %v", err)
 	}
@@ -268,7 +283,7 @@ func TestHeadlessOSSLocalAppliesIncludeExcludeAndDays(t *testing.T) {
 		"--days", "30",
 		"--output-dir", outputDir,
 		"--agent-id", "agent-win-1",
-		"--scan-id", "scan-win-1",
+		"--scan-id", "20260526-120000-abcdef12",
 	})
 	if err != nil {
 		t.Fatalf("run headless oss local: %v", err)

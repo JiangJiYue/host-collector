@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"windows-host-collector/forensics/prefetch"
 	"windows-host-collector/models"
 	"windows-host-collector/utils"
 )
@@ -46,14 +47,35 @@ func (pc *PrefetchCollector) collectPrefetchEntries() []models.PrefetchEntry {
 		processName = strings.TrimSuffix(processName, ".exe")
 
 		prefetch := models.PrefetchEntry{
-			File:        name,
-			ProcessName: processName,
-			ProcessPath: "",
-			RunCount:    pc.parseRunCount(fullPath),
-			LastRunTime: utils.FormatTime(info.ModTime()),
-			Exists:      true,
-			CreateTime:  utils.FormatTime(info.ModTime()),
-			ModifyTime:  utils.FormatTime(info.ModTime()),
+			File:             name,
+			ProcessName:      processName,
+			ProcessPath:      "",
+			RunCount:         0,
+			LastRunTime:      utils.FormatTime(info.ModTime()),
+			FileHash:         getPrefetchHash(name),
+			SourcePath:       fullPath,
+			ParseStatus:      "unparsed",
+			PrefetchFileSize: info.Size(),
+			Exists:           true,
+			CreateTime:       utils.FormatTime(info.ModTime()),
+			ModifyTime:       utils.FormatTime(info.ModTime()),
+		}
+		if parsed, err := pc.parsePrefetchFile(fullPath, name); err != nil {
+			prefetch.ParseStatus = "parse_failed"
+			prefetch.ParseError = err.Error()
+		} else {
+			prefetch.ProcessName = parsed.ExecutableName
+			prefetch.RunCount = parsed.RunCount
+			prefetch.FormatVersion = parsed.FormatVersion
+			prefetch.FileHash = parsed.FileHash
+			prefetch.EmbeddedHash = parsed.EmbeddedHash
+			prefetch.RunTimes = parsed.RunTimes
+			prefetch.ReferencedFiles = parsed.ReferencedFiles
+			prefetch.ProcessPath = parsed.ExecutablePath
+			if parsed.LastRunTime != "" {
+				prefetch.LastRunTime = parsed.LastRunTime
+			}
+			prefetch.ParseStatus = "parsed"
 		}
 
 		result = append(result, prefetch)
@@ -63,32 +85,12 @@ func (pc *PrefetchCollector) collectPrefetchEntries() []models.PrefetchEntry {
 	return result
 }
 
-// parseRunCount 从 Prefetch 文件头解析运行次数
-func (pc *PrefetchCollector) parseRunCount(filePath string) int {
-	file, err := os.Open(filePath)
+func (pc *PrefetchCollector) parsePrefetchFile(filePath string, evidenceName string) (prefetch.ParsedPrefetch, error) {
+	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return 0
+		return prefetch.ParsedPrefetch{}, err
 	}
-	defer file.Close()
-
-	// Prefetch 文件格式（Windows 10+）：
-	// 偏移 0x00: 版本签名 (4 bytes)
-	// 偏移 0x70: 运行次数 (4 bytes, little-endian)
-	// 简化实现：读取文件头的运行次数
-	buf := make([]byte, 256)
-	n, err := file.Read(buf)
-	if err != nil || n < 0x74 {
-		return 0
-	}
-
-	// 读取运行次数（偏移 0x70，4 字节 little-endian）
-	runCount := int(buf[0x70]) | int(buf[0x71])<<8 | int(buf[0x72])<<16 | int(buf[0x73])<<24
-
-	if runCount < 0 || runCount > 100000 {
-		return 1
-	}
-
-	return runCount
+	return prefetch.Parse(data, evidenceName)
 }
 
 func getPrefetchHash(name string) string {

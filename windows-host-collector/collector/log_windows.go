@@ -6,6 +6,8 @@ import (
 	"context"
 	"syscall"
 	"unsafe"
+
+	"collector-shared/logplan"
 	"windows-host-collector/models"
 	"windows-host-collector/utils"
 
@@ -20,12 +22,18 @@ var (
 	procEvtRender          = wevtapi.NewProc("EvtRender")
 	procEvtOpenChannelEnum = wevtapi.NewProc("EvtOpenChannelEnum")
 	procEvtNextChannelPath = wevtapi.NewProc("EvtNextChannelPath")
+	procEvtOpenLog         = wevtapi.NewProc("EvtOpenLog")
+	procEvtGetLogInfo      = wevtapi.NewProc("EvtGetLogInfo")
 )
 
 const (
 	EvtQueryChannelPath       uint32 = 0x1
 	EvtQueryReverseDirection  uint32 = 0x200
 	EvtRenderEventXml         uint32 = 1
+	EvtOpenChannelPath        uint32 = 0x1
+	EvtLogNumberOfLogRecords  uint32 = 0
+	EvtLogOldestRecordNumber  uint32 = 1
+	EvtLogFileSize            uint32 = 2
 	ERROR_INSUFFICIENT_BUFFER uint32 = 122
 	ERROR_NO_MORE_ITEMS       uint32 = 259
 )
@@ -56,6 +64,10 @@ func (lc *LogCollector) collectPlatformLogs(ctx context.Context) []models.Window
 			filtered = append(filtered, ch)
 		}
 	}
+	plan := decideWindowsEventLogCollectionPlan(estimateWindowsEventLogChannels(filtered))
+	lc.collectionPlan = &plan
+	utils.Info("Collector", "Windows事件日志采集计划: mode=%s reason=%s total_bytes=%d total_events=%d channels=%d",
+		plan.Mode, plan.Reason, plan.TotalBytes, plan.TotalEvents, len(plan.Sources))
 
 	state := newEventLogProgressState(defaultEventLogLimits(), len(filtered))
 	var allLogs []models.WindowsLogItem
@@ -67,7 +79,7 @@ func (lc *LogCollector) collectPlatformLogs(ctx context.Context) []models.Window
 		default:
 		}
 
-		logs := lc.readEvtLog(ctx, source, state)
+		logs := lc.readEvtLog(ctx, source, state, plan)
 		allLogs = append(allLogs, logs...)
 
 		select {
@@ -130,7 +142,67 @@ func listAllChannels() []string {
 	return channels
 }
 
-func (lc *LogCollector) readEvtLog(ctx context.Context, channelPath string, state *eventLogProgressState) []models.WindowsLogItem {
+func estimateWindowsEventLogChannels(channels []string) []eventLogChannelEstimate {
+	estimates := make([]eventLogChannelEstimate, 0, len(channels))
+	for _, channel := range channels {
+		estimate := eventLogChannelEstimate{
+			Channel: channel,
+			Status:  string(logplan.SourceAvailable),
+		}
+		sizeBytes, err := windowsEventLogInfoUint64(channel, EvtLogFileSize)
+		if err != nil {
+			estimate.Status = string(logplan.SourceError)
+			estimate.Reason = err.Error()
+			estimates = append(estimates, estimate)
+			continue
+		}
+		records, err := windowsEventLogInfoUint64(channel, EvtLogNumberOfLogRecords)
+		if err != nil {
+			estimate.Status = string(logplan.SourceError)
+			estimate.Reason = err.Error()
+			estimate.SizeBytes = int64(sizeBytes)
+			estimates = append(estimates, estimate)
+			continue
+		}
+		estimate.SizeBytes = int64(sizeBytes)
+		estimate.RecordCount = int64(records)
+		estimates = append(estimates, estimate)
+	}
+	return estimates
+}
+
+func windowsEventLogInfoUint64(channel string, propertyID uint32) (uint64, error) {
+	channelUTF16, err := windows.UTF16PtrFromString(channel)
+	if err != nil {
+		return 0, err
+	}
+	handle, _, callErr := procEvtOpenLog.Call(
+		0,
+		uintptr(unsafe.Pointer(channelUTF16)),
+		uintptr(EvtOpenChannelPath),
+	)
+	if handle == 0 {
+		return 0, callErr
+	}
+	h := evtHandle(handle)
+	defer h.close()
+
+	var value uint64
+	var used uint32
+	r1, _, infoErr := procEvtGetLogInfo.Call(
+		handle,
+		uintptr(propertyID),
+		uintptr(unsafe.Sizeof(value)),
+		uintptr(unsafe.Pointer(&value)),
+		uintptr(unsafe.Pointer(&used)),
+	)
+	if r1 == 0 {
+		return 0, infoErr
+	}
+	return value, nil
+}
+
+func (lc *LogCollector) readEvtLog(ctx context.Context, channelPath string, state *eventLogProgressState, plan logplan.Plan) []models.WindowsLogItem {
 	channelPathUTF16, err := windows.UTF16PtrFromString(channelPath)
 	if err != nil {
 		utils.LogError("Collector", "通道名编码失败 %s: %v", channelPath, err)
@@ -155,6 +227,8 @@ func (lc *LogCollector) readEvtLog(ctx context.Context, channelPath string, stat
 	logType := normalizeLogType(channelPath)
 	var results []models.WindowsLogItem
 	var idx int
+	window := newEventLogChannelWindow(channelPath, lc.windowStart)
+	window.ApplyPlanMode(string(plan.Mode))
 
 	for {
 		select {
@@ -196,7 +270,7 @@ func (lc *LogCollector) readEvtLog(ctx context.Context, channelPath string, stat
 		}
 
 		if entry := parseEventXML(xmlStr, logType, idx); entry != nil {
-			keep, stop := eventLogWindowDecision(lc.windowStart, entry)
+			keep, stop := window.Decide(entry)
 			if stop {
 				break
 			}

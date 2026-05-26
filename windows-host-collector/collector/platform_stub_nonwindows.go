@@ -42,6 +42,17 @@ func (lc *LogCollector) collectPlatformLogs(ctx context.Context) []models.Window
 	return []models.WindowsLogItem{}
 }
 
+func estimateWindowsEventLogChannels(channels []string) []eventLogChannelEstimate {
+	estimates := make([]eventLogChannelEstimate, 0, len(channels))
+	for _, channel := range channels {
+		estimates = append(estimates, eventLogChannelEstimate{
+			Channel: channel,
+			Status:  "available",
+		})
+	}
+	return estimates
+}
+
 func (nc *NetworkCollector) collectWindowsDNSCache(ctx context.Context) ([]models.DnsCacheRecord, error) {
 	return []models.DnsCacheRecord{}, nil
 }

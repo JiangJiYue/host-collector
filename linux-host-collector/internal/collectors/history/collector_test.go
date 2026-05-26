@@ -21,6 +21,9 @@ func TestCollectParsesBashHistoryAsOperationRecords(t *testing.T) {
 	if first.Event != "shell_history" || first.OperationTime != "2024-05-01T00:00:00Z" {
 		t.Fatalf("unexpected first history record event/time: %#v", first)
 	}
+	if first.TimestampSource != "bash_history_timestamp" {
+		t.Fatalf("expected bash timestamp source, got %#v", first)
+	}
 	if first.File != "sudo cat /etc/shadow" || first.FilePath != "home/alice/.bash_history" || first.Source != "alice:bash_history" {
 		t.Fatalf("unexpected first history record details: %#v", first)
 	}
@@ -33,6 +36,9 @@ func TestCollectParsesBashHistoryAsOperationRecords(t *testing.T) {
 	zshRecord := findRecordBySource(result.Records, "alice:zsh_history")
 	if zshRecord.OperationTime != "2024-05-01T00:01:40Z" || zshRecord.File != "systemctl --user enable user-agent.service" {
 		t.Fatalf("unexpected zsh history record: %#v", zshRecord)
+	}
+	if zshRecord.TimestampSource != "zsh_extended_history" {
+		t.Fatalf("expected zsh timestamp source, got %#v", zshRecord)
 	}
 }
 

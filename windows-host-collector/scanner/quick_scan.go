@@ -282,6 +282,17 @@ func (qs *QuickScanner) reportStageDecision(stageKey string, decision stageRunDe
 	qs.stageMu.Unlock()
 }
 
+func (qs *QuickScanner) reportPrefetchEmptyResult() {
+	qs.stageMu.Lock()
+	qs.stageDiagnostics = append(qs.stageDiagnostics, models.StageDiagnostic{
+		Stage:      "prefetch",
+		State:      string(models.StageCompleted),
+		ReasonCode: "empty_result",
+		Evidence:   "no_prefetch_files",
+	})
+	qs.stageMu.Unlock()
+}
+
 func (qs *QuickScanner) stageDiagnosticsSnapshot() []models.StageDiagnostic {
 	qs.stageMu.Lock()
 	defer qs.stageMu.Unlock()
@@ -700,6 +711,9 @@ func (qs *QuickScanner) Scan(ctx context.Context) (*models.ScanEnvelope, error) 
 			if pfResult, ok := result.(*collector.PrefetchCollectionResult); ok {
 				data.Prefetch = pfResult.Entries
 				utils.Info(comp, "Prefetch采集成功: %d个", len(pfResult.Entries))
+				if len(pfResult.Entries) == 0 {
+					qs.reportPrefetchEmptyResult()
+				}
 			} else {
 				utils.LogError(comp, "Prefetch类型断言失败, type=%T", result)
 			}

@@ -22,17 +22,22 @@ func Derive(inputs Inputs) []contracts.TimelineEvent {
 	events := make([]contracts.TimelineEvent, 0, len(inputs.LogEvents)+len(inputs.PersistenceItems)+len(inputs.Network.Connections)+len(inputs.Processes))
 
 	for index, event := range inputs.LogEvents {
+		timestamp, timestampSource := event.Timestamp, "log_event"
+		if timestamp == "" {
+			timestamp, timestampSource = inputs.CollectedAt, "collected_at"
+		}
 		events = append(events, contracts.TimelineEvent{
 			ID:        fmt.Sprintf("linux-log-%d", index),
-			Timestamp: inputs.CollectedAt,
+			Timestamp: timestamp,
 			EventType: "linux.log." + event.EventType,
 			Subject:   logSubject(event),
 			PlatformExtensions: contracts.PlatformExtensions{Linux: map[string]any{
-				"source":   event.Source,
-				"program":  event.Program,
-				"target":   event.Target,
-				"remoteIp": event.RemoteIP,
-				"evidence": event.Evidence,
+				"source":          event.Source,
+				"program":         event.Program,
+				"target":          event.Target,
+				"remoteIp":        event.RemoteIP,
+				"evidence":        event.Evidence,
+				"timestampSource": timestampSource,
 			}},
 		})
 	}
@@ -50,8 +55,9 @@ func Derive(inputs Inputs) []contracts.TimelineEvent {
 				ID:   fmt.Sprintf("%s:%s:%d", connection.Protocol, connection.LocalAddress, connection.LocalPort),
 			},
 			PlatformExtensions: contracts.PlatformExtensions{Linux: map[string]any{
-				"state": connection.State,
-				"inode": connection.Inode,
+				"state":           connection.State,
+				"inode":           connection.Inode,
+				"timestampSource": "collected_at",
 			}},
 		})
 	}
@@ -67,15 +73,23 @@ func Derive(inputs Inputs) []contracts.TimelineEvent {
 				Name: item.Name,
 			},
 			PlatformExtensions: contracts.PlatformExtensions{Linux: map[string]any{
-				"command": item.Command,
+				"command":         item.Command,
+				"timestampSource": "collected_at",
 			}},
 		})
 	}
 
 	for _, proc := range inputs.Processes {
+		timestamp, timestampSource := proc.CreatedAt, "process_created_at"
+		if timestamp == "" {
+			timestamp, timestampSource = proc.CreateTime, "process_create_time"
+		}
+		if timestamp == "" {
+			timestamp, timestampSource = inputs.CollectedAt, "collected_at"
+		}
 		events = append(events, contracts.TimelineEvent{
 			ID:        fmt.Sprintf("linux-process-%d", proc.PID),
-			Timestamp: inputs.CollectedAt,
+			Timestamp: timestamp,
 			EventType: "linux.process.observed",
 			Subject: contracts.Subject{
 				Type: contracts.SubjectProcess,
@@ -83,9 +97,10 @@ func Derive(inputs Inputs) []contracts.TimelineEvent {
 				Name: proc.Name,
 			},
 			PlatformExtensions: contracts.PlatformExtensions{Linux: map[string]any{
-				"ppid":        proc.PPID,
-				"uid":         proc.UID,
-				"commandLine": proc.CommandLine,
+				"ppid":            proc.PPID,
+				"uid":             proc.UID,
+				"commandLine":     proc.CommandLine,
+				"timestampSource": timestampSource,
 			}},
 		})
 	}

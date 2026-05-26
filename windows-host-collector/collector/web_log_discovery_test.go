@@ -1,6 +1,8 @@
 package collector
 
 import (
+	"bytes"
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,6 +200,68 @@ func TestDiscoverWebLogPathsFromPhpStudyNginxConfig(t *testing.T) {
 	}
 	if len(paths) != 1 || paths[0] != accessLog {
 		t.Fatalf("expected phpstudy nginx access log path, got %#v", paths)
+	}
+}
+
+func TestDiscoverWebLogPathsFromPhpStudyNginxConfigResolvesRelativeLogPathFromInstallRoot(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "phpstudy_pro", "Extensions", "Nginx1.15.11", "logs")
+	confDir := filepath.Join(root, "phpstudy_pro", "Extensions", "Nginx1.15.11", "conf")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		t.Fatalf("mkdir conf dir: %v", err)
+	}
+
+	accessLog := filepath.Join(logDir, "access.log")
+	if err := os.WriteFile(accessLog, []byte(""), 0o644); err != nil {
+		t.Fatalf("write access log: %v", err)
+	}
+
+	mainConf := filepath.Join(confDir, "nginx.conf")
+	mainBody := "events {}\nhttp {\n  access_log logs/access.log;\n}\n"
+	if err := os.WriteFile(mainConf, []byte(mainBody), 0o644); err != nil {
+		t.Fatalf("write nginx conf: %v", err)
+	}
+
+	paths, err := discoverWebLogPathsFromConfig(mainConf, "nginx")
+	if err != nil {
+		t.Fatalf("discover phpstudy nginx paths: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != accessLog {
+		t.Fatalf("expected phpstudy nginx relative access log path %q, got %#v", accessLog, paths)
+	}
+}
+
+func TestDiscoverWebLogPathsFromPhpStudyApacheConfigResolvesRelativeLogPathFromInstallRoot(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "phpstudy_pro", "Extensions", "Apache2.4.39", "logs")
+	confDir := filepath.Join(root, "phpstudy_pro", "Extensions", "Apache2.4.39", "conf")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		t.Fatalf("mkdir conf dir: %v", err)
+	}
+
+	accessLog := filepath.Join(logDir, "access.log")
+	if err := os.WriteFile(accessLog, []byte(""), 0o644); err != nil {
+		t.Fatalf("write access log: %v", err)
+	}
+
+	httpdConf := filepath.Join(confDir, "httpd.conf")
+	confBody := `CustomLog "logs/access.log" combined`
+	if err := os.WriteFile(httpdConf, []byte(confBody), 0o644); err != nil {
+		t.Fatalf("write httpd conf: %v", err)
+	}
+
+	paths, err := discoverWebLogPathsFromConfig(httpdConf, "apache")
+	if err != nil {
+		t.Fatalf("discover phpstudy apache paths: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != accessLog {
+		t.Fatalf("expected phpstudy apache relative access log path %q, got %#v", accessLog, paths)
 	}
 }
 
@@ -499,5 +563,47 @@ func TestScanWebLogCandidateFilesRespectsLimits(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Fatalf("expected exactly 2 candidates due to limits, got %#v", got)
+	}
+}
+
+func TestReadFileSampleIncludesTailForLargeAccessLogs(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "access.log")
+	body := strings.Repeat("old line\n", 1024) +
+		`::1 - - [26/Feb/2024:22:24:20 +0800] "GET /install.php HTTP/1.1" 200 8321` + "\n"
+	if err := os.WriteFile(logPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write access log: %v", err)
+	}
+
+	got, err := readFileSample(logPath, 256)
+	if err != nil {
+		t.Fatalf("read sample: %v", err)
+	}
+	if !strings.Contains(string(got), "/install.php") {
+		t.Fatalf("expected tail sample to include recent access line, got %q", string(got))
+	}
+}
+
+func TestReadFileSampleDecompressesGzipAccessLogs(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "access.log.1.gz")
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write([]byte(`127.0.0.1 - - [26/Feb/2024:22:25:37 +0800] "GET /gzip HTTP/1.1" 200 2653` + "\n")); err != nil {
+		t.Fatalf("write gzip payload: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+	if err := os.WriteFile(logPath, compressed.Bytes(), 0o644); err != nil {
+		t.Fatalf("write gzip log: %v", err)
+	}
+
+	got, err := readFileSample(logPath, 4096)
+	if err != nil {
+		t.Fatalf("read gzip sample: %v", err)
+	}
+	if !strings.Contains(string(got), "/gzip") {
+		t.Fatalf("expected decompressed gzip sample, got %q", string(got))
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"windows-host-collector/models"
+	"windows-host-collector/utils"
 )
 
 const (
@@ -49,6 +50,8 @@ var (
 	procRegCreateKeyEx = advapi32Proc.NewProc("RegCreateKeyExW")
 	procRegSaveKeyW    = advapi32Proc.NewProc("RegSaveKeyW")
 	procRegLoadAppKeyW = advapi32Proc.NewProc("RegLoadAppKeyW")
+	procRegLoadKeyW    = advapi32Proc.NewProc("RegLoadKeyW")
+	procRegUnLoadKeyW  = advapi32Proc.NewProc("RegUnLoadKeyW")
 )
 
 type windowsSAMAccountProvider struct{}
@@ -80,24 +83,22 @@ func (p windowsSAMAccountProvider) collect(ctx context.Context) (sources []accou
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := closeKeys(); err == nil && closeErr != nil {
-			err = closeErr
-		}
-	}()
 
 	var records []samAccountRecord
 	records, err = collectSAMRecords(ctx, usersKey, aliasesKey)
 	if err != nil {
-		return nil, err
+		return nil, combineCleanupError(err, closeKeys())
 	}
+	return samSourcesFromRecordsWithCleanup(records, closeKeys())
+}
 
-	sources = make([]accountSourceRecord, 0, len(records))
+func samSourcesFromRecordsWithCleanup(records []samAccountRecord, cleanupErr error) ([]accountSourceRecord, error) {
+	sources := make([]accountSourceRecord, 0, len(records))
 	for _, record := range records {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		sources = append(sources, samAccountRecordToSource(record))
+	}
+	if cleanupErr != nil {
+		utils.LogError("Collector", "SAM provider cleanup failed after successful read: %v", cleanupErr)
 	}
 	return sources, nil
 }
@@ -189,25 +190,17 @@ func openBackupSAMSnapshotKeys(ctx context.Context) (registry.Key, registry.Key,
 		return 0, 0, func() error { return nil }, combineCleanupError(err, cleanup())
 	}
 
-	appKey, err := regLoadAppKey(tempPath)
+	appKey, unloadAppKey, err := openSavedSAMHive(tempPath)
 	if err != nil {
 		return 0, 0, func() error { return nil }, combineCleanupError(err, cleanup())
 	}
-	appKeyPending := true
-	closeAppKey := func() error {
-		if !appKeyPending {
-			return nil
-		}
-		appKeyPending = false
-		return appKey.Close()
-	}
 	if err := ctx.Err(); err != nil {
-		return 0, 0, func() error { return nil }, combineCleanupError(err, joinCleanupErrors(closeAppKey(), cleanup()))
+		return 0, 0, func() error { return nil }, combineCleanupError(err, joinCleanupErrors(unloadAppKey(), cleanup()))
 	}
 
-	usersKey, err := registry.OpenKey(appKey, samUsersSubPath, registry.READ)
+	usersKey, err := openSAMKey(appKey, samUsersSubPath, registry.READ)
 	if err != nil {
-		return 0, 0, func() error { return nil }, combineCleanupError(err, joinCleanupErrors(closeAppKey(), cleanup()))
+		return 0, 0, func() error { return nil }, combineCleanupError(fmt.Errorf("open backup SAM users key: %w", err), joinCleanupErrors(unloadAppKey(), cleanup()))
 	}
 	usersKeyPending := true
 	closeUsersKey := func() error {
@@ -218,12 +211,12 @@ func openBackupSAMSnapshotKeys(ctx context.Context) (registry.Key, registry.Key,
 		return usersKey.Close()
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, 0, func() error { return nil }, combineCleanupError(err, joinCleanupErrors(closeUsersKey(), closeAppKey(), cleanup()))
+		return 0, 0, func() error { return nil }, combineCleanupError(err, joinCleanupErrors(closeUsersKey(), unloadAppKey(), cleanup()))
 	}
 
-	aliasesKey, err := registry.OpenKey(appKey, samBuiltinAliasesSubPath, registry.READ)
+	aliasesKey, err := openSAMKey(appKey, samBuiltinAliasesSubPath, registry.READ)
 	if err != nil {
-		return 0, 0, func() error { return nil }, combineCleanupError(err, joinCleanupErrors(closeUsersKey(), closeAppKey(), cleanup()))
+		return 0, 0, func() error { return nil }, combineCleanupError(fmt.Errorf("open backup SAM aliases key: %w", err), joinCleanupErrors(closeUsersKey(), unloadAppKey(), cleanup()))
 	}
 	aliasesKeyPending := true
 	closeAliasesKey := func() error {
@@ -234,11 +227,11 @@ func openBackupSAMSnapshotKeys(ctx context.Context) (registry.Key, registry.Key,
 		return aliasesKey.Close()
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, 0, func() error { return nil }, combineCleanupError(err, joinCleanupErrors(closeAliasesKey(), closeUsersKey(), closeAppKey(), cleanup()))
+		return 0, 0, func() error { return nil }, combineCleanupError(err, joinCleanupErrors(closeAliasesKey(), closeUsersKey(), unloadAppKey(), cleanup()))
 	}
 
 	closeKeys := func() error {
-		return joinCleanupErrors(closeAliasesKey(), closeUsersKey(), closeAppKey(), cleanup())
+		return joinCleanupErrors(closeAliasesKey(), closeUsersKey(), unloadAppKey(), cleanup())
 	}
 
 	return usersKey, aliasesKey, closeKeys, nil
@@ -315,18 +308,18 @@ func collectSAMRecords(ctx context.Context, usersKey registry.Key, aliasesKey re
 }
 
 func readBuiltinAliasMemberships(ctx context.Context, aliasesKey registry.Key) (map[string][]string, string, error) {
-	membersKey, err := registry.OpenKey(aliasesKey, samBuiltinMembersSubKey, registry.READ)
+	membersKey, err := openSAMKey(aliasesKey, samBuiltinMembersSubKey, registry.READ)
 	if err != nil {
 		if errors.Is(err, registry.ErrNotExist) || errors.Is(err, syscall.ERROR_FILE_NOT_FOUND) {
 			return map[string][]string{}, "", nil
 		}
-		return nil, "", err
+		return nil, "", fmt.Errorf("open builtin alias members key: %w", err)
 	}
 	defer membersKey.Close()
 
 	domainNames, err := membersKey.ReadSubKeyNames(-1)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("read builtin alias domains: %w", err)
 	}
 
 	aliasMemberships := make(map[string][]string)
@@ -335,7 +328,7 @@ func readBuiltinAliasMemberships(ctx context.Context, aliasesKey registry.Key) (
 		if err := ctx.Err(); err != nil {
 			return nil, "", err
 		}
-		domainKey, openErr := registry.OpenKey(membersKey, domainName, registry.READ)
+		domainKey, openErr := openSAMKey(membersKey, domainName, registry.READ)
 		if openErr != nil {
 			continue
 		}
@@ -347,7 +340,7 @@ func readBuiltinAliasMemberships(ctx context.Context, aliasesKey registry.Key) (
 		memberNames, readErr := domainKey.ReadSubKeyNames(-1)
 		if readErr != nil {
 			domainKey.Close()
-			return nil, "", readErr
+			return nil, "", fmt.Errorf("read builtin alias member rids for %s: %w", domainName, readErr)
 		}
 		for _, memberName := range memberNames {
 			if err := ctx.Err(); err != nil {
@@ -358,7 +351,7 @@ func readBuiltinAliasMemberships(ctx context.Context, aliasesKey registry.Key) (
 			if !ok {
 				continue
 			}
-			memberKey, memberErr := registry.OpenKey(domainKey, memberName, registry.QUERY_VALUE)
+			memberKey, memberErr := openSAMKey(domainKey, memberName, registry.QUERY_VALUE)
 			if memberErr != nil {
 				continue
 			}
@@ -427,7 +420,7 @@ func readAliasMembershipRIDs(key registry.Key) ([]uint32, error) {
 func readSAMRIDRecords(ctx context.Context, usersKey registry.Key) ([]samAccountRecord, error) {
 	names, err := usersKey.ReadSubKeyNames(-1)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read SAM user RID keys: %w", err)
 	}
 
 	records := make([]samAccountRecord, 0, len(names))
@@ -443,7 +436,7 @@ func readSAMRIDRecords(ctx context.Context, usersKey registry.Key) ([]samAccount
 			RID:    rid,
 			RIDKey: true,
 		}
-		if userKey, openErr := registry.OpenKey(usersKey, name, registry.QUERY_VALUE); openErr == nil {
+		if userKey, openErr := openSAMKey(usersKey, name, registry.QUERY_VALUE); openErr == nil {
 			fValue, _ := readSAMUserBinary(userKey, "F")
 			vValue, _ := readSAMUserBinary(userKey, "V")
 			record.FDigest = digestSAMValue("sha256:", fValue)
@@ -557,7 +550,7 @@ func readSAMVUTF16Field(data []byte, offsetOffset uint32, lengthOffset uint32) *
 		return nil
 	}
 	fieldOffset := binary.LittleEndian.Uint32(data[offsetOffset:offsetOffset+4]) + 0xCC
-	fieldLength := binary.LittleEndian.Uint32(data[lengthOffset:lengthOffset+4])
+	fieldLength := binary.LittleEndian.Uint32(data[lengthOffset : lengthOffset+4])
 	if fieldLength == 0 {
 		return nil
 	}
@@ -655,18 +648,18 @@ func appendUniqueString(values []string, next string) []string {
 }
 
 func readSAMNameRecords(ctx context.Context, usersKey registry.Key) ([]samAccountRecord, error) {
-	namesKey, err := registry.OpenKey(usersKey, samNamesSubKey, registry.READ)
+	namesKey, err := openSAMKey(usersKey, samNamesSubKey, registry.READ)
 	if err != nil {
 		if errors.Is(err, registry.ErrNotExist) || errors.Is(err, syscall.ERROR_FILE_NOT_FOUND) {
 			return []samAccountRecord{}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("open SAM Names key: %w", err)
 	}
 	defer namesKey.Close()
 
 	names, err := namesKey.ReadSubKeyNames(-1)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read SAM Names subkeys: %w", err)
 	}
 
 	records := make([]samAccountRecord, 0, len(names))
@@ -675,7 +668,7 @@ func readSAMNameRecords(ctx context.Context, usersKey registry.Key) ([]samAccoun
 			return nil, err
 		}
 
-		nameKey, err := registry.OpenKey(namesKey, username, registry.QUERY_VALUE)
+		nameKey, err := openSAMKey(namesKey, username, registry.QUERY_VALUE)
 		if err != nil {
 			continue
 		}
@@ -838,13 +831,98 @@ func regLoadAppKey(path string) (registry.Key, error) {
 		uintptr(unsafe.Pointer(pathPtr)),
 		uintptr(unsafe.Pointer(&handle)),
 		uintptr(regsamRead),
-		0,
 		uintptr(regProcessAppKey),
+		0,
 	)
 	if r1 != 0 {
 		return 0, syscall.Errno(r1)
 	}
 	return registry.Key(handle), nil
+}
+
+func openSavedSAMHive(path string) (registry.Key, func() error, error) {
+	appKey, err := regLoadAppKey(path)
+	if err == nil {
+		appKeyPending := true
+		closeAppKey := func() error {
+			if !appKeyPending {
+				return nil
+			}
+			appKeyPending = false
+			return appKey.Close()
+		}
+		return appKey, closeAppKey, nil
+	}
+
+	mountName := "host_collector_sam_" + shortSAMMountHash(path)
+	if loadErr := regLoadKey(registry.USERS, mountName, path); loadErr != nil {
+		return 0, func() error { return nil }, fmt.Errorf("load saved SAM hive: RegLoadAppKey=%v; RegLoadKey=%w", err, loadErr)
+	}
+	mountedKey, openErr := openSAMKey(registry.USERS, mountName, registry.READ)
+	if openErr != nil {
+		return 0, func() error { return nil }, combineCleanupError(fmt.Errorf("open mounted SAM hive: %w", openErr), regUnloadKey(registry.USERS, mountName))
+	}
+	mountedPending := true
+	unloadMounted := func() error {
+		if !mountedPending {
+			return nil
+		}
+		mountedPending = false
+		return joinCleanupErrors(mountedKey.Close(), regUnloadKey(registry.USERS, mountName))
+	}
+	return mountedKey, unloadMounted, nil
+}
+
+func regLoadKey(parent registry.Key, subKey string, path string) error {
+	subKeyPtr, err := syscall.UTF16PtrFromString(subKey)
+	if err != nil {
+		return err
+	}
+	pathPtr, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	r1, _, _ := procRegLoadKeyW.Call(
+		uintptr(parent),
+		uintptr(unsafe.Pointer(subKeyPtr)),
+		uintptr(unsafe.Pointer(pathPtr)),
+	)
+	if r1 != 0 {
+		return syscall.Errno(r1)
+	}
+	return nil
+}
+
+func regUnloadKey(parent registry.Key, subKey string) error {
+	subKeyPtr, err := syscall.UTF16PtrFromString(subKey)
+	if err != nil {
+		return err
+	}
+	r1, _, _ := procRegUnLoadKeyW.Call(
+		uintptr(parent),
+		uintptr(unsafe.Pointer(subKeyPtr)),
+	)
+	if r1 != 0 {
+		return syscall.Errno(r1)
+	}
+	return nil
+}
+
+func shortSAMMountHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:8])
+}
+
+func openSAMKey(parent registry.Key, path string, access uint32) (registry.Key, error) {
+	key, err := regCreateKeyBackupOpen(parent, path, samBackupOpenAccessMask(access))
+	if err == nil {
+		return key, nil
+	}
+	return registry.OpenKey(parent, path, access)
+}
+
+func samBackupOpenAccessMask(access uint32) uint32 {
+	return access | regsamBackupRead
 }
 
 func regCreateKeyBackupOpen(parent registry.Key, path string, access uint32) (registry.Key, error) {

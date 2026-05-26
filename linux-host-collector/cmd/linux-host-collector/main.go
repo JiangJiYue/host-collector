@@ -42,9 +42,6 @@ func run(args []string) error {
 }
 
 func runScan(args []string) error {
-	if err := requireRoot(); err != nil {
-		return err
-	}
 	flags := flag.NewFlagSet("scan", flag.ContinueOnError)
 	root := flags.String("root", "/", "root filesystem path")
 	outputDir := flags.String("output-dir", "", "output directory for manifest.json and sections/*.json")
@@ -57,7 +54,13 @@ func runScan(args []string) error {
 		return err
 	}
 	if *scanID == "" {
-		*scanID = appcore.FormatScanID(time.Now())
+		*scanID = appcore.NewScanID(time.Now())
+	}
+	if !appcore.ValidScanID(*scanID) {
+		return fmt.Errorf("invalid scan id %q", *scanID)
+	}
+	if err := requireRoot(); err != nil {
+		return err
 	}
 	*outputDir = localoutputdir.Resolve(*outputDir, *scanID)
 	if *agentID == "" {

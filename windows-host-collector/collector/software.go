@@ -20,7 +20,7 @@ func (sc *SoftwareCollector) Name() string {
 // SoftwareCollectionResult 软件采集结果
 type SoftwareCollectionResult struct {
 	Software []models.InstalledSoftwareItem `json:"software"`
-	Total    int                             `json:"total"`
+	Total    int                            `json:"total"`
 }
 
 func (sc *SoftwareCollector) Collect(ctx context.Context) (interface{}, error) {

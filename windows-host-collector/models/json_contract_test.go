@@ -37,6 +37,42 @@ func TestProcessThreadUsesThreadIDJsonField(t *testing.T) {
 	}
 }
 
+func TestPrefetchEntryUsesParsedEvidenceFields(t *testing.T) {
+	body, err := json.Marshal(PrefetchEntry{
+		File:             "POWERSHELL.EXE-1234ABCD.pf",
+		ProcessName:      "POWERSHELL.EXE",
+		ProcessPath:      `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+		RunCount:         7,
+		LastRunTime:      "2023-07-01T00:00:00Z",
+		RunTimes:         []string{"2023-07-01T00:00:00Z", "2023-06-30T00:00:00Z"},
+		ReferencedFiles:  []string{`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`},
+		FormatVersion:    30,
+		FileHash:         "1234ABCD",
+		EmbeddedHash:     "1234ABCD",
+		SourcePath:       `C:\Windows\Prefetch\POWERSHELL.EXE-1234ABCD.pf`,
+		ParseStatus:      "parsed",
+		ParseError:       "",
+		PrefetchFileSize: 4096,
+		Exists:           true,
+		CreateTime:       "2023-07-01T00:00:00Z",
+		ModifyTime:       "2023-07-01T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("marshal prefetch entry: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode prefetch entry: %v", err)
+	}
+
+	for _, want := range []string{"runTimes", "referencedFiles", "formatVersion", "fileHash", "embeddedHash", "sourcePath", "parseStatus", "prefetchFileSize"} {
+		if _, exists := decoded[want]; !exists {
+			t.Fatalf("expected parsed prefetch field %s, got keys=%v json=%s", want, sortedKeys(decoded), string(body))
+		}
+	}
+}
+
 func TestSystemProcessMasqueradeModelsUseCamelCaseContractFields(t *testing.T) {
 	fileIdentityID := "file-identity-1"
 	sha256 := "0123456789abcdef"
@@ -230,24 +266,24 @@ func TestQuickScanDataIncludesPlatformCapabilitiesAndStageDiagnostics(t *testing
 		Timestamp: "2026-05-02T00:00:00Z",
 		PlatformProfile: &PlatformProfile{
 			Platform:            "windows",
-			SupportLevel:        "legacy",
-			BuildFamily:         "windows_7_or_server_2008_r2",
+			SupportLevel:        "modern",
+			BuildFamily:         "windows_10_or_server_2016_plus",
 			Architecture:        "amd64",
 			CapabilitiesVersion: "windows-capabilities-v1",
 			Capabilities:        []string{"wmi", "registry", "event_log_api"},
 			CapabilityStatuses: map[string]any{
 				"prefetch_win10_layout": map[string]any{
 					"supported": false,
-					"reason":    "legacy_prefetch_layout",
-					"evidence":  "windows_7_or_server_2008_r2",
+					"reason":    "prefetch_unavailable",
+					"evidence":  "prefetch_directory_missing_or_disabled",
 				},
 			},
 			Facts: map[string]any{
-				"osFamily":         "workstation",
-				"productName":      "Windows 7 Professional",
-				"editionId":        "Professional",
-				"installationType": "Client",
-				"buildNumber":      7601,
+				"osFamily":         "server",
+				"productName":      "Windows Server 2022 Standard",
+				"editionId":        "ServerStandard",
+				"installationType": "Server",
+				"buildNumber":      20348,
 				"ubr":              123,
 			},
 		},
@@ -257,7 +293,7 @@ func TestQuickScanDataIncludesPlatformCapabilitiesAndStageDiagnostics(t *testing
 				State:      string(StageSkipped),
 				ReasonCode: "missing_capability",
 				Capability: "prefetch_win10_layout",
-				Evidence:   "windows_7_or_server_2008_r2",
+				Evidence:   "prefetch_directory_missing_or_disabled:prefetch_unavailable",
 			},
 		},
 	})
@@ -274,11 +310,11 @@ func TestQuickScanDataIncludesPlatformCapabilitiesAndStageDiagnostics(t *testing
 	if !ok {
 		t.Fatalf("expected platformProfile object, got keys=%v", sortedKeys(decoded))
 	}
-	if profile["supportLevel"] != "legacy" || profile["buildFamily"] != "windows_7_or_server_2008_r2" {
+	if profile["supportLevel"] != "modern" || profile["buildFamily"] != "windows_10_or_server_2016_plus" {
 		t.Fatalf("unexpected platform profile: %#v", profile)
 	}
 	facts, ok := profile["facts"].(map[string]any)
-	if !ok || facts["osFamily"] != "workstation" || facts["editionId"] != "Professional" {
+	if !ok || facts["osFamily"] != "server" || facts["editionId"] != "ServerStandard" {
 		t.Fatalf("expected detailed platform facts, got %#v", profile["facts"])
 	}
 	capabilities, ok := profile["capabilities"].([]any)
@@ -290,7 +326,7 @@ func TestQuickScanDataIncludesPlatformCapabilitiesAndStageDiagnostics(t *testing
 		t.Fatalf("expected capabilityStatuses object, got %#v", profile["capabilityStatuses"])
 	}
 	prefetchStatus, ok := statuses["prefetch_win10_layout"].(map[string]any)
-	if !ok || prefetchStatus["supported"] != false || prefetchStatus["reason"] != "legacy_prefetch_layout" {
+	if !ok || prefetchStatus["supported"] != false || prefetchStatus["reason"] != "prefetch_unavailable" {
 		t.Fatalf("expected structured prefetch capability status, got %#v", statuses)
 	}
 

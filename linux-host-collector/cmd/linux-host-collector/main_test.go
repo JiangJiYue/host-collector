@@ -59,6 +59,22 @@ func TestRunScanRequiresRoot(t *testing.T) {
 	}
 }
 
+func TestRunScanRejectsInvalidScanIDBeforePrivilegeCheck(t *testing.T) {
+	withEffectiveUID(t, 1000)
+
+	err := run([]string{
+		"scan",
+		"--scan-id", "../escape",
+		"--output-dir", filepath.Join(t.TempDir(), "out"),
+	})
+	if err == nil {
+		t.Fatalf("expected invalid scan id error")
+	}
+	if !strings.Contains(err.Error(), "invalid scan id") {
+		t.Fatalf("expected invalid scan id error before root check, got %v", err)
+	}
+}
+
 func TestScanOSSLocalWritesSectionsBundle(t *testing.T) {
 	withEffectiveUID(t, 0)
 
@@ -120,14 +136,14 @@ func TestScanOSSLocalDotOutputDirCreatesScanSubdirectory(t *testing.T) {
 			"--include", "host",
 			"--root", filepath.Join(previousWD, "..", "..", "internal", "collectors", "testdata", "root"),
 			"--output-dir", "./",
-			"--scan-id", "scan-linux-1",
+			"--scan-id", "20260526-120000-abcdef12",
 		})
 		if err != nil {
 			t.Fatalf("run oss-local: %v", err)
 		}
 	})
 
-	expectedDir := filepath.Join(baseDir, "host-collector-scan-linux-1")
+	expectedDir := filepath.Join(baseDir, "host-collector-20260526-120000-abcdef12")
 	if _, err := os.Stat(filepath.Join(expectedDir, "manifest.json")); err != nil {
 		t.Fatalf("expected manifest in auto output directory: %v", err)
 	}

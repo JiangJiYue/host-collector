@@ -34,6 +34,19 @@ func TestFingerprintWebLogSampleDetectsCombinedFormat(t *testing.T) {
 	}
 }
 
+func TestFingerprintWebLogSampleDetectsForwardedTimedFormat(t *testing.T) {
+	sample := []byte("admin.example.com 10.0.0.5 203.0.113.9 - - [26/Feb/2024:22:25:36 +0800] \"GET /admin.php HTTP/1.1\" 403 6182 \"-\" \"Mozilla/5.0\" 0.123\n")
+
+	got := fingerprintWebLogSample(`C:\nginx\logs\access.log`, sample)
+
+	if got.Format != webLogFormatCombined {
+		t.Fatalf("expected combined-compatible format, got %#v", got)
+	}
+	if got.Confidence != webLogConfidenceHigh {
+		t.Fatalf("expected high confidence, got %#v", got.Confidence)
+	}
+}
+
 func TestFingerprintWebLogSampleDetectsJSONAccessFormat(t *testing.T) {
 	sample := []byte("{\"time\":\"2026-04-21T12:01:02Z\",\"remote_addr\":\"1.2.3.4\",\"method\":\"GET\",\"request_uri\":\"/\",\"status\":200,\"body_bytes_sent\":1234,\"http_user_agent\":\"curl/8.0\"}\n")
 

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"collector-shared/logplan"
 	"windows-host-collector/models"
 	"windows-host-collector/utils"
 )
@@ -84,10 +85,12 @@ func webLogDiscoveryContextObserverSnapshot() func(WebLogDiscoveryContext) {
 }
 
 type WebLogCollector struct {
-	inputs      webLogDiscoveryInputs
-	scanOptions webLogScanOptions
-	context     WebLogDiscoveryContext
-	windowStart time.Time
+	inputs            webLogDiscoveryInputs
+	scanOptions       webLogScanOptions
+	context           WebLogDiscoveryContext
+	windowStart       time.Time
+	fullModeMaxBytes  int64
+	fullModeMaxEvents int64
 }
 
 func NewWebLogCollector() *WebLogCollector {
@@ -101,6 +104,7 @@ func NewWebLogCollector() *WebLogCollector {
 			MaxSampleBytes:    10 * 1024 * 1024,
 			AllowedExtensions: []string{".log", ".txt"},
 		},
+		fullModeMaxBytes: 256 * 1024 * 1024,
 	}
 }
 
@@ -130,6 +134,12 @@ func (wc *WebLogCollector) WithTimeWindow(start time.Time) *WebLogCollector {
 	return wc
 }
 
+func (wc *WebLogCollector) WithFullModeThresholds(maxBytes int64, maxEvents int64) *WebLogCollector {
+	wc.fullModeMaxBytes = maxBytes
+	wc.fullModeMaxEvents = maxEvents
+	return wc
+}
+
 func SetWebLogCollectorWindowObserverForTesting(observer func(time.Time)) func() {
 	webLogCollectorWindowObserverForTesting.mu.Lock()
 	previous := webLogCollectorWindowObserverForTesting.observer
@@ -154,9 +164,10 @@ func (wc *WebLogCollector) Name() string {
 }
 
 type WebLogCollectionResult struct {
-	Sources []models.WebLogSource `json:"webLogSources"`
-	Entries []models.WebLogEntry  `json:"webLogEntries"`
-	Total   int                   `json:"total"`
+	Sources        []models.WebLogSource `json:"webLogSources"`
+	Entries        []models.WebLogEntry  `json:"webLogEntries"`
+	CollectionPlan *logplan.Plan         `json:"webLogCollectionPlan,omitempty"`
+	Total          int                   `json:"total"`
 }
 
 func (wc *WebLogCollector) Collect(ctx context.Context) (interface{}, error) {
@@ -209,6 +220,12 @@ func (wc *WebLogCollector) Collect(ctx context.Context) (interface{}, error) {
 		return nil, err
 	}
 	utils.Info("Collector", "Web日志候选文件扫描完成: roots=%d files=%d", len(uniqueSorted(roots)), len(files))
+	collectionPlan := decideWebLogCollectionPlan(files, logplan.Thresholds{
+		MaxFullBytes:  wc.fullModeMaxBytes,
+		MaxFullEvents: wc.fullModeMaxEvents,
+	})
+	utils.Info("Collector", "Web日志采集计划: mode=%s reason=%s total_bytes=%d files=%d",
+		collectionPlan.Mode, collectionPlan.Reason, collectionPlan.TotalBytes, len(collectionPlan.Sources))
 
 	sources := make([]models.WebLogSource, 0, len(files))
 	entries := make([]models.WebLogEntry, 0)
@@ -249,7 +266,7 @@ func (wc *WebLogCollector) Collect(ctx context.Context) (interface{}, error) {
 			if !ok {
 				continue
 			}
-			if !wc.entryWithinWindow(entry) {
+			if !wc.entryWithinPlan(entry, collectionPlan) {
 				continue
 			}
 			entries = append(entries, entry)
@@ -266,17 +283,45 @@ func (wc *WebLogCollector) Collect(ctx context.Context) (interface{}, error) {
 	utils.Info("Collector", "Web 日志采集完成: %d来源, %d条记录", len(sources), len(entries))
 
 	return &WebLogCollectionResult{
-		Sources: sources,
-		Entries: entries,
-		Total:   len(entries),
+		Sources:        sources,
+		Entries:        entries,
+		CollectionPlan: &collectionPlan,
+		Total:          len(entries),
 	}, nil
 }
 
-func (wc *WebLogCollector) entryWithinWindow(entry models.WebLogEntry) bool {
+func (wc *WebLogCollector) entryWithinPlan(entry models.WebLogEntry, plan logplan.Plan) bool {
+	if plan.Mode == logplan.ModeFull {
+		return true
+	}
 	if wc.windowStart.IsZero() {
 		return true
 	}
 	return eventWithinWindow(entry.Timestamp, wc.windowStart)
+}
+
+func decideWebLogCollectionPlan(files []webLogFileCandidate, thresholds logplan.Thresholds) logplan.Plan {
+	sources := make([]logplan.SourceEstimate, 0, len(files))
+	for _, file := range files {
+		status := logplan.SourceAvailable
+		if file.Size == 0 {
+			status = logplan.SourceEmpty
+		}
+		sources = append(sources, logplan.SourceEstimate{
+			Path:      file.Path,
+			SizeBytes: file.Size,
+			Status:    status,
+		})
+	}
+	return logplan.Decide(logplan.Request{
+		Domain:     "web_logs",
+		Sources:    sources,
+		Thresholds: thresholds,
+		Backfill: logplan.BackfillPolicy{
+			Enabled: true,
+			Reason:  "web_log_suspicious_patterns",
+		},
+	})
 }
 
 func discoverDefaultWebLogInputs() webLogDiscoveryInputs {
@@ -386,6 +431,7 @@ func (wc *WebLogCollector) discoverSources(inputs webLogDiscoveryInputs) ([]webL
 	if err := appendConfigSources(inputs.TomcatConfigs, "tomcat"); err != nil {
 		return nil, err
 	}
+	candidates = append(candidates, discoverPHPStudyDefaultLogSources()...)
 
 	runtimeCandidates, err := wc.discoverRuntimeSources()
 	if err != nil {
@@ -417,6 +463,74 @@ func (wc *WebLogCollector) discoverSources(inputs webLogDiscoveryInputs) ([]webL
 	}
 	sort.Slice(unique, func(i, j int) bool { return unique[i].Path < unique[j].Path })
 	return unique, nil
+}
+
+func discoverPHPStudyDefaultLogSources() []webLogSourceCandidate {
+	roots := webLogDiscoveryRootsForTesting
+	if len(roots) == 0 {
+		roots = []string{
+			`C:\phpstudy_pro`,
+			`C:\phpStudy`,
+			`D:\phpstudy_pro`,
+			`D:\phpStudy`,
+		}
+	}
+
+	candidates := make([]webLogSourceCandidate, 0)
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		phpStudyRoots := []string{root}
+		for _, nested := range []string{"phpstudy_pro", "phpStudy"} {
+			nestedRoot := filepath.Join(root, nested)
+			if nestedRoot != root {
+				phpStudyRoots = append(phpStudyRoots, nestedRoot)
+			}
+		}
+		for _, phpStudyRoot := range uniqueSorted(phpStudyRoots) {
+			for _, server := range []struct {
+				serverType string
+				pattern    string
+			}{
+				{serverType: "apache", pattern: filepath.Join(phpStudyRoot, "Extensions", "Apache*", "logs")},
+				{serverType: "nginx", pattern: filepath.Join(phpStudyRoot, "Extensions", "Nginx*", "logs")},
+			} {
+				logDirs, err := filepath.Glob(server.pattern)
+				if err != nil {
+					continue
+				}
+				for _, logDir := range logDirs {
+					for _, path := range accessLogFilesInDir(logDir) {
+						candidates = append(candidates, webLogSourceCandidate{
+							ID:           path,
+							Path:         path,
+							ServerType:   server.serverType,
+							SourceMethod: "phpStudyDefaultLogPath",
+							Evidence:     []string{"PHPSTUDY_DEFAULT_LOG_PATH"},
+						})
+					}
+				}
+			}
+		}
+	}
+	return candidates
+}
+
+func accessLogFilesInDir(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if !isAccessLogPath(entry.Name()) {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, entry.Name()))
+	}
+	return uniqueSorted(paths)
 }
 
 func countWebLogCandidatesByServer(candidates []webLogSourceCandidate) map[string]int {
@@ -556,6 +670,48 @@ func runtimeHintToFSPath(path string) string {
 
 func hasGlobMeta(path string) bool {
 	return strings.ContainsAny(path, "*?[")
+}
+
+func expandAccessLogVariants(path string) []string {
+	var variants []string
+	if path != "" {
+		variants = append(variants, filepath.Clean(path))
+	}
+	if !isAccessLogPath(path) {
+		return uniqueSorted(variants)
+	}
+	for _, candidate := range []string{path + ".1", path + ".2.gz", path + ".gz"} {
+		if _, err := os.Stat(candidate); err == nil {
+			variants = append(variants, filepath.Clean(candidate))
+		}
+	}
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	for _, pattern := range []string{base + ".*", strings.TrimSuffix(base, ".log") + "_*"} {
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			continue
+		}
+		variants = append(variants, matches...)
+	}
+	filtered := make([]string, 0, len(variants))
+	for _, candidate := range variants {
+		if isAccessLogPath(candidate) {
+			filtered = append(filtered, filepath.Clean(candidate))
+		}
+	}
+	return uniqueSorted(filtered)
+}
+
+func isAccessLogPath(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	base = strings.TrimSuffix(base, ".gz")
+	return base == "access" ||
+		base == "access.log" ||
+		strings.HasPrefix(base, "access.log.") ||
+		strings.HasPrefix(base, "access_log") ||
+		strings.HasPrefix(base, "access-log") ||
+		strings.HasPrefix(base, "localhost_access_log")
 }
 
 func runtimeSourceMethod(candidate webLogRuntimeCandidate) string {

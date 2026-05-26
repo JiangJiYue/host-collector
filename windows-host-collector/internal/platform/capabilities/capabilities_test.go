@@ -18,7 +18,7 @@ func TestWindowsCapabilitiesUseSharedContractTypes(t *testing.T) {
 	}
 }
 
-func TestWindows7SP1IsLegacyAndDisablesModernCollectors(t *testing.T) {
+func TestWindows7SP1IsLegacyAndKeepsVersionAwarePrefetch(t *testing.T) {
 	profile := DeriveWindowsProfile(WindowsFacts{
 		MajorVersion: 6,
 		MinorVersion: 1,
@@ -32,7 +32,6 @@ func TestWindows7SP1IsLegacyAndDisablesModernCollectors(t *testing.T) {
 	}
 	for _, capability := range []Capability{
 		CapabilityModernDesktopUI,
-		CapabilityPrefetchWin10Layout,
 		CapabilityProcessHandleDetail,
 		CapabilityBrowserHistorySQLite,
 	} {
@@ -40,12 +39,15 @@ func TestWindows7SP1IsLegacyAndDisablesModernCollectors(t *testing.T) {
 			t.Fatalf("expected Windows 7 SP1 to disable %s", capability)
 		}
 	}
+	if !profile.Supports(CapabilityPrefetchWin10Layout) {
+		t.Fatalf("expected Windows 7 SP1 to keep version-aware Prefetch parser capability")
+	}
 	if !profile.Supports(CapabilityEventLogAPI) {
 		t.Fatalf("expected Windows 7 SP1 to keep event log API capability")
 	}
 }
 
-func TestWindows7SP1RecordsStructuredCapabilityProbeStatus(t *testing.T) {
+func TestWindows7SP1RecordsStructuredPrefetchCapabilityStatus(t *testing.T) {
 	profile := DeriveWindowsProfile(WindowsFacts{
 		MajorVersion: 6,
 		MinorVersion: 1,
@@ -55,11 +57,11 @@ func TestWindows7SP1RecordsStructuredCapabilityProbeStatus(t *testing.T) {
 	})
 
 	prefetch := profile.CapabilityStatus(CapabilityPrefetchWin10Layout)
-	if prefetch.Supported {
-		t.Fatalf("expected Win7 SP1 prefetch probe to be unsupported")
+	if !prefetch.Supported {
+		t.Fatalf("expected Win7 SP1 prefetch probe to be supported")
 	}
-	if prefetch.Reason != "legacy_prefetch_layout" {
-		t.Fatalf("expected legacy prefetch reason, got %#v", prefetch)
+	if prefetch.Reason != "available" {
+		t.Fatalf("expected available prefetch reason, got %#v", prefetch)
 	}
 	if prefetch.Evidence != "windows_7_or_server_2008_r2" {
 		t.Fatalf("expected build-family evidence, got %#v", prefetch)
@@ -68,6 +70,54 @@ func TestWindows7SP1RecordsStructuredCapabilityProbeStatus(t *testing.T) {
 	eventLog := profile.CapabilityStatus(CapabilityEventLogAPI)
 	if !eventLog.Supported || eventLog.Reason != "available" {
 		t.Fatalf("expected event log probe to be available, got %#v", eventLog)
+	}
+}
+
+func TestServer2012R2KeepsVersionAwarePrefetchCapability(t *testing.T) {
+	profile := DeriveWindowsProfile(WindowsFacts{
+		MajorVersion:     6,
+		MinorVersion:     3,
+		BuildNumber:      9600,
+		ProductName:      "Windows Server 2012 R2 Standard",
+		InstallationType: "Server",
+		Architecture:     "amd64",
+	})
+
+	if profile.SupportLevel != SupportLegacy {
+		t.Fatalf("expected Server 2012 R2 to be legacy support, got %q", profile.SupportLevel)
+	}
+	if profile.Facts.OSFamily != OSFamilyServer {
+		t.Fatalf("expected server OS family, got %#v", profile.Facts)
+	}
+	if !profile.Supports(CapabilityPrefetchWin10Layout) {
+		t.Fatalf("expected Server 2012 R2 to keep version-aware Prefetch parser capability")
+	}
+}
+
+func TestServerPrefetchRuntimeProbeCanMarkPrefetchUnavailable(t *testing.T) {
+	profile := DeriveWindowsProfile(WindowsFacts{
+		MajorVersion:     10,
+		MinorVersion:     0,
+		BuildNumber:      20348,
+		ProductName:      "Windows Server 2022 Standard",
+		InstallationType: "Server",
+		Architecture:     "amd64",
+		WebView2Runtime:  "not_detected",
+		CapabilityProbes: map[Capability]ProbeStatus{
+			CapabilityPrefetchWin10Layout: {
+				Supported: false,
+				Reason:    "prefetch_unavailable",
+				Evidence:  "prefetch_directory_missing_or_disabled",
+			},
+		},
+	})
+
+	status := profile.CapabilityStatus(CapabilityPrefetchWin10Layout)
+	if status.Supported {
+		t.Fatalf("expected server runtime probe to disable Prefetch when unavailable")
+	}
+	if status.Reason != "prefetch_unavailable" || status.Evidence != "prefetch_directory_missing_or_disabled" {
+		t.Fatalf("expected explicit Prefetch unavailable evidence, got %#v", status)
 	}
 }
 

@@ -40,6 +40,8 @@ type DNSRecord struct {
 	RecordType string `json:"recordType"`
 	IPAddress  string `json:"ipAddress"`
 	TTL        int    `json:"ttl,omitempty"`
+	Source     string `json:"source,omitempty"`
+	SourceType string `json:"sourceType,omitempty"`
 }
 
 type HostEntry struct {
@@ -55,6 +57,8 @@ type Route struct {
 	Flags        string `json:"flags"`
 	Metric       int    `json:"metric,omitempty"`
 	DefaultRoute bool   `json:"defaultRoute"`
+	Source       string `json:"source,omitempty"`
+	SourceType   string `json:"sourceType,omitempty"`
 }
 
 type Neighbor struct {
@@ -78,15 +82,17 @@ type FirewallRule struct {
 	DestinationPort string   `json:"destinationPort,omitempty"`
 	Raw             string   `json:"raw"`
 	RiskTags        []string `json:"riskTags,omitempty"`
+	SourceType      string   `json:"sourceType,omitempty"`
 }
 
 type PolicyRule struct {
-	Source   string `json:"source"`
-	Priority string `json:"priority,omitempty"`
-	From     string `json:"from,omitempty"`
-	To       string `json:"to,omitempty"`
-	Table    string `json:"table,omitempty"`
-	Raw      string `json:"raw"`
+	Source     string `json:"source"`
+	Priority   string `json:"priority,omitempty"`
+	From       string `json:"from,omitempty"`
+	To         string `json:"to,omitempty"`
+	Table      string `json:"table,omitempty"`
+	Raw        string `json:"raw"`
+	SourceType string `json:"sourceType,omitempty"`
 }
 
 func Collect(root string) (Result, error) {
@@ -136,17 +142,50 @@ func Collect(root string) (Result, error) {
 		{relPath: filepath.Join("etc", "iptables", "rules.v4"), family: "ipv4"},
 		{relPath: filepath.Join("etc", "iptables", "rules.v6"), family: "ipv6"},
 	} {
-		if rules, err := readIPTablesRules(filepath.Join(root, candidate.relPath), candidate.relPath, candidate.family); err == nil && len(rules) > 0 {
+		if rules, err := readIPTablesRules(filepath.Join(root, candidate.relPath), candidate.relPath, candidate.family, "persistent_config"); err == nil && len(rules) > 0 {
 			result.FirewallRules = append(result.FirewallRules, rules...)
 			result.Sources = append(result.Sources, candidate.relPath)
 		}
+	}
+	for _, candidate := range []struct {
+		relPath string
+		family  string
+	}{
+		{relPath: filepath.Join("run", "host-collector", "runtime", "iptables-save.v4"), family: "ipv4"},
+		{relPath: filepath.Join("run", "host-collector", "runtime", "iptables-save.v6"), family: "ipv6"},
+	} {
+		if rules, err := readIPTablesRules(filepath.Join(root, candidate.relPath), candidate.relPath, candidate.family, "runtime"); err == nil && len(rules) > 0 {
+			result.FirewallRules = append(result.FirewallRules, rules...)
+			result.Sources = append(result.Sources, candidate.relPath)
+		}
+	}
+	if rules, err := readNFTRules(filepath.Join(root, "run", "host-collector", "runtime", "nft-list-ruleset.txt"), filepath.Join("run", "host-collector", "runtime", "nft-list-ruleset.txt")); err == nil && len(rules) > 0 {
+		result.FirewallRules = append(result.FirewallRules, rules...)
+		result.Sources = append(result.Sources, filepath.Join("run", "host-collector", "runtime", "nft-list-ruleset.txt"))
 	}
 	for _, relPath := range []string{
 		filepath.Join("etc", "iproute2", "rules.v4"),
 		filepath.Join("etc", "iproute2", "rules.v6"),
 	} {
-		if rules, err := readPolicyRules(filepath.Join(root, relPath), relPath); err == nil && len(rules) > 0 {
+		if rules, err := readPolicyRules(filepath.Join(root, relPath), relPath, "persistent_config"); err == nil && len(rules) > 0 {
 			result.PolicyRules = append(result.PolicyRules, rules...)
+			result.Sources = append(result.Sources, relPath)
+		}
+	}
+	if routes, err := readRuntimeRoutes(filepath.Join(root, "run", "host-collector", "runtime", "ip-route.txt"), filepath.Join("run", "host-collector", "runtime", "ip-route.txt")); err == nil && len(routes) > 0 {
+		result.Routes = append(result.Routes, routes...)
+		result.Sources = append(result.Sources, filepath.Join("run", "host-collector", "runtime", "ip-route.txt"))
+	}
+	if rules, err := readPolicyRules(filepath.Join(root, "run", "host-collector", "runtime", "ip-rule.txt"), filepath.Join("run", "host-collector", "runtime", "ip-rule.txt"), "runtime"); err == nil && len(rules) > 0 {
+		result.PolicyRules = append(result.PolicyRules, rules...)
+		result.Sources = append(result.Sources, filepath.Join("run", "host-collector", "runtime", "ip-rule.txt"))
+	}
+	for _, relPath := range []string{
+		filepath.Join("run", "systemd", "resolve", "cache.txt"),
+		filepath.Join("var", "lib", "misc", "dnsmasq.leases"),
+	} {
+		if records, err := readRuntimeDNSRecords(filepath.Join(root, relPath), relPath); err == nil && len(records) > 0 {
+			result.DNSCache = append(result.DNSCache, records...)
 			result.Sources = append(result.Sources, relPath)
 		}
 	}
@@ -179,7 +218,7 @@ func Collect(root string) (Result, error) {
 	return result, nil
 }
 
-func readIPTablesRules(path string, source string, family string) ([]FirewallRule, error) {
+func readIPTablesRules(path string, source string, family string, sourceType string) ([]FirewallRule, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -201,14 +240,14 @@ func readIPTablesRules(path string, source string, family string) ([]FirewallRul
 		if !strings.HasPrefix(line, "-A ") {
 			continue
 		}
-		rules = append(rules, parseIPTablesRule(source, family, table, line))
+		rules = append(rules, parseIPTablesRule(source, family, table, line, sourceType))
 	}
 	return rules, scanner.Err()
 }
 
-func parseIPTablesRule(source string, family string, table string, line string) FirewallRule {
+func parseIPTablesRule(source string, family string, table string, line string, sourceType string) FirewallRule {
 	fields := strings.Fields(line)
-	rule := FirewallRule{Source: source, Family: family, Table: table, Raw: line}
+	rule := FirewallRule{Source: source, Family: family, Table: table, Raw: line, SourceType: sourceType}
 	if len(fields) >= 2 {
 		rule.Chain = fields[1]
 	}
@@ -240,6 +279,45 @@ func parseIPTablesRule(source string, family string, table string, line string) 
 	return rule
 }
 
+func readNFTRules(path string, source string) ([]FirewallRule, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var rules []FirewallRule
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		rule := FirewallRule{Source: source, SourceType: "runtime", Raw: line, Family: "inet"}
+		fields := strings.Fields(strings.NewReplacer("{", " ", "}", " ", ";", " ").Replace(line))
+		for index, field := range fields {
+			switch field {
+			case "table":
+				if index+2 < len(fields) {
+					rule.Family = fields[index+1]
+					rule.Table = fields[index+2]
+				}
+			case "chain":
+				if index+1 < len(fields) {
+					rule.Chain = fields[index+1]
+				}
+			case "tcp", "udp":
+				rule.Protocol = field
+				if index+2 < len(fields) && fields[index+1] == "dport" {
+					rule.DestinationPort = fields[index+2]
+				}
+			case "accept", "drop", "reject":
+				rule.Action = field
+			}
+		}
+		rule.RiskTags = firewallRiskTags(rule)
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
 func firewallRiskTags(rule FirewallRule) []string {
 	var tags []string
 	switch strings.ToUpper(rule.Action) {
@@ -257,7 +335,7 @@ func firewallRiskTags(rule FirewallRule) []string {
 	return uniqueStrings(tags)
 }
 
-func readPolicyRules(path string, source string) ([]PolicyRule, error) {
+func readPolicyRules(path string, source string, sourceType string) ([]PolicyRule, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -271,13 +349,13 @@ func readPolicyRules(path string, source string) ([]PolicyRule, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		rules = append(rules, parsePolicyRule(source, line))
+		rules = append(rules, parsePolicyRule(source, line, sourceType))
 	}
 	return rules, scanner.Err()
 }
 
-func parsePolicyRule(source string, line string) PolicyRule {
-	rule := PolicyRule{Source: source, Raw: line}
+func parsePolicyRule(source string, line string, sourceType string) PolicyRule {
+	rule := PolicyRule{Source: source, Raw: line, SourceType: sourceType}
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return rule
@@ -303,6 +381,82 @@ func parsePolicyRule(source string, line string) PolicyRule {
 		}
 	}
 	return rule
+}
+
+func readRuntimeRoutes(path string, source string) ([]Route, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var routes []Route
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		route := Route{Source: source, SourceType: "runtime", Destination: firstField(line)}
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "default" {
+			route.Destination = "0.0.0.0/0"
+			route.DefaultRoute = true
+		}
+		for index := 0; index < len(fields); index++ {
+			if index+1 >= len(fields) {
+				break
+			}
+			switch fields[index] {
+			case "via":
+				index++
+				route.Gateway = fields[index]
+			case "dev":
+				index++
+				route.Interface = fields[index]
+			case "metric":
+				index++
+				route.Metric, _ = strconv.Atoi(fields[index])
+			}
+		}
+		routes = append(routes, route)
+	}
+	return routes, scanner.Err()
+}
+
+func readRuntimeDNSRecords(path string, source string) ([]DNSRecord, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var records []DNSRecord
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		if strings.HasSuffix(source, "dnsmasq.leases") && len(fields) >= 4 {
+			records = append(records, DNSRecord{Host: fields[3], RecordType: "lease", IPAddress: fields[2], Source: source, SourceType: "runtime"})
+			continue
+		}
+		if len(fields) >= 3 && net.ParseIP(fields[2]) != nil {
+			ttl := 0
+			for _, field := range fields[3:] {
+				if value, ok := strings.CutPrefix(field, "ttl="); ok {
+					ttl, _ = strconv.Atoi(value)
+				}
+			}
+			records = append(records, DNSRecord{Host: fields[0], RecordType: fields[1], IPAddress: fields[2], TTL: ttl, Source: source, SourceType: "runtime"})
+		}
+	}
+	return records, nil
+}
+
+func firstField(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func readRoutes(path string) ([]Route, error) {

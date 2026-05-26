@@ -188,19 +188,18 @@ func enableBaseWindowsCapabilities(profile *Profile) {
 	setCapabilityStatus(profile, CapabilityEventLogAPI, true, "available")
 	setCapabilityStatus(profile, CapabilityRegistry, true, "available")
 	setCapabilityStatus(profile, CapabilityRawNTFSRead, true, "available")
+	setCapabilityStatus(profile, CapabilityPrefetchWin10Layout, true, "available")
 	setCapabilityStatus(profile, CapabilityWindowsUserArtifacts, true, "available")
 	setCapabilityStatus(profile, CapabilityBrowserHistorySQLite, true, "available")
 }
 
 func enableModernWindowsCapabilities(profile *Profile) {
 	setCapabilityStatus(profile, CapabilityModernDesktopUI, true, "available")
-	setCapabilityStatus(profile, CapabilityPrefetchWin10Layout, true, "available")
 	setCapabilityStatus(profile, CapabilityProcessHandleDetail, true, "available")
 }
 
 func disableModernWindowsCapabilities(profile *Profile) {
 	setCapabilityStatus(profile, CapabilityModernDesktopUI, false, "legacy_webview2_not_default")
-	setCapabilityStatus(profile, CapabilityPrefetchWin10Layout, false, "legacy_prefetch_layout")
 	setCapabilityStatus(profile, CapabilityProcessHandleDetail, false, "legacy_handle_detail_disabled")
 	setCapabilityStatus(profile, CapabilityBrowserHistorySQLite, false, "legacy_runtime_sqlite_disabled")
 }

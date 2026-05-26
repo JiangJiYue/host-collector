@@ -264,7 +264,7 @@ func (nc *NetworkCollector) collectDNSCacheViaAPI(ctx context.Context) ([]models
 func (nc *NetworkCollector) collectDNSCacheViaIPConfig(ctx context.Context) ([]models.DnsCacheRecord, error) {
 	utils.Info("Collector", "尝试隐藏调用 ipconfig /displaydns 获取 DNS 缓存")
 
-	cmd := exec.CommandContext(ctx, "cmd", "/C", "chcp 65001>nul && ipconfig /displaydns")
+	cmd := exec.CommandContext(ctx, systemExecutablePath("cmd.exe"), "/D", "/C", "chcp 65001>nul && ipconfig /displaydns")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	output, err := cmd.Output()
 	if err != nil {

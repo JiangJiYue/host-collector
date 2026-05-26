@@ -5,7 +5,6 @@ package client
 import (
 	"fmt"
 	"os"
-	"strings"
 	"syscall"
 	"unsafe"
 
@@ -49,8 +48,12 @@ func relaunchWithRunAs() error {
 	shellExecute := shell32.NewProc("ShellExecuteW")
 
 	verbPtr, _ := syscall.UTF16PtrFromString("runas")
-	exePtr, _ := syscall.UTF16PtrFromString(exePath)
-	argsPtr, _ := syscall.UTF16PtrFromString(strings.Join(os.Args[1:], " "))
+	params, err := buildShellExecuteParameters(exePath, os.Args[1:])
+	if err != nil {
+		return err
+	}
+	exePtr, _ := syscall.UTF16PtrFromString(params.Executable)
+	argsPtr, _ := syscall.UTF16PtrFromString(params.Parameters)
 	dirPtr, _ := syscall.UTF16PtrFromString("")
 
 	ret, _, callErr := shellExecute.Call(

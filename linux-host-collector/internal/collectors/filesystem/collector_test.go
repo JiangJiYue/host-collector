@@ -180,6 +180,36 @@ func TestCollectExplainsHighRiskLinuxFileEvidence(t *testing.T) {
 	}
 }
 
+func TestLinuxSecurityAttributesFromXattrs(t *testing.T) {
+	attrs := securityAttributesFromXattrs(map[string][]byte{
+		"security.selinux":         []byte("system_u:object_r:sshd_exec_t:s0\x00"),
+		"security.capability":      []byte{0x01, 0x02, 0x03},
+		"system.posix_acl_access":  []byte{0x02},
+		"system.posix_acl_default": []byte{0x03},
+		"user.comment":             []byte("ignored"),
+		"security.ima":             []byte("integrity"),
+		"trusted.overlay.opaque":   []byte("y"),
+	})
+
+	if attrs.SELinuxContext != "system_u:object_r:sshd_exec_t:s0" {
+		t.Fatalf("expected SELinux context, got %#v", attrs)
+	}
+	if attrs.LinuxCapabilities != "010203" {
+		t.Fatalf("expected hex encoded capability xattr, got %#v", attrs)
+	}
+	if !attrs.HasACL || attrs.ACLTypes == nil || !testContains(attrs.ACLTypes, "access") || !testContains(attrs.ACLTypes, "default") {
+		t.Fatalf("expected ACL markers, got %#v", attrs)
+	}
+	for _, name := range []string{"security.capability", "security.ima", "security.selinux", "system.posix_acl_access", "system.posix_acl_default", "trusted.overlay.opaque"} {
+		if !testContains(attrs.XattrNames, name) {
+			t.Fatalf("expected security xattr name %q in %#v", name, attrs.XattrNames)
+		}
+	}
+	if testContains(attrs.XattrNames, "user.comment") {
+		t.Fatalf("expected non-security xattr to be omitted, got %#v", attrs.XattrNames)
+	}
+}
+
 func TestCollectSkipsPseudoPathsAndHonorsEntryLimit(t *testing.T) {
 	root := t.TempDir()
 	mustMkdir(t, filepath.Join(root, "proc"))

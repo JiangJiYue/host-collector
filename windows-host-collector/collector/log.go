@@ -5,14 +5,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"collector-shared/logplan"
 	"windows-host-collector/models"
 	"windows-host-collector/utils"
 )
 
 // LogCollector Windows事件日志采集器
 type LogCollector struct {
-	progress    func(LogProgress)
-	windowStart time.Time
+	progress       func(LogProgress)
+	windowStart    time.Time
+	collectionPlan *logplan.Plan
 }
 
 var logCollectorWindowObserverForTesting struct {
@@ -66,6 +69,7 @@ func (lc *LogCollector) Name() string {
 // LogCollectionResult 日志采集结果
 type LogCollectionResult struct {
 	WindowsEventLogs []models.WindowsLogItem `json:"windowsEventLogs"`
+	CollectionPlan   *logplan.Plan           `json:"windowsEventLogCollectionPlan,omitempty"`
 	Total            int                     `json:"total"`
 }
 
@@ -98,6 +102,7 @@ func (lc *LogCollector) Collect(ctx context.Context) (interface{}, error) {
 
 	return &LogCollectionResult{
 		WindowsEventLogs: logs,
+		CollectionPlan:   lc.collectionPlan,
 		Total:            len(logs),
 	}, nil
 }
@@ -148,6 +153,92 @@ func eventLogWindowDecision(windowStart time.Time, entry *models.WindowsLogItem)
 		return false, true
 	}
 	return true, false
+}
+
+const sparseSecurityFullCollectionThreshold = 5000
+
+type eventLogChannelWindow struct {
+	channelPath    string
+	windowStart    time.Time
+	eventsSeen     int
+	fullCollection bool
+}
+
+func newEventLogChannelWindow(channelPath string, windowStart time.Time) *eventLogChannelWindow {
+	return &eventLogChannelWindow{
+		channelPath: channelPath,
+		windowStart: windowStart,
+	}
+}
+
+func (w *eventLogChannelWindow) Decide(entry *models.WindowsLogItem) (keep bool, stop bool) {
+	if w == nil {
+		return eventLogWindowDecision(time.Time{}, entry)
+	}
+	w.eventsSeen++
+	if w.fullCollection {
+		return true, false
+	}
+	keep, stop = eventLogWindowDecision(w.windowStart, entry)
+	if stop && w.shouldContinueSparseSecurityHistory() {
+		w.fullCollection = true
+		return true, false
+	}
+	return keep, stop
+}
+
+func (w *eventLogChannelWindow) FullCollectionEnabled() bool {
+	return w != nil && w.fullCollection
+}
+
+func (w *eventLogChannelWindow) ApplyPlanMode(mode string) {
+	if w == nil {
+		return
+	}
+	if mode == string(logplan.ModeFull) {
+		w.fullCollection = true
+	}
+}
+
+func (w *eventLogChannelWindow) shouldContinueSparseSecurityHistory() bool {
+	return strings.EqualFold(w.channelPath, "Security") && w.eventsSeen <= sparseSecurityFullCollectionThreshold
+}
+
+type eventLogChannelEstimate struct {
+	Channel     string
+	SizeBytes   int64
+	RecordCount int64
+	Status      string
+	Reason      string
+}
+
+func decideWindowsEventLogCollectionPlan(estimates []eventLogChannelEstimate) logplan.Plan {
+	sources := make([]logplan.SourceEstimate, 0, len(estimates))
+	for _, estimate := range estimates {
+		status := logplan.SourceStatus(estimate.Status)
+		if status == "" {
+			status = logplan.SourceError
+		}
+		sources = append(sources, logplan.SourceEstimate{
+			Path:       estimate.Channel,
+			SizeBytes:  estimate.SizeBytes,
+			EventCount: estimate.RecordCount,
+			Status:     status,
+			Reason:     estimate.Reason,
+		})
+	}
+	return logplan.Decide(logplan.Request{
+		Domain:  "windows_event_logs",
+		Sources: sources,
+		Thresholds: logplan.Thresholds{
+			MaxFullBytes:  256 * 1024 * 1024,
+			MaxFullEvents: 50000,
+		},
+		Backfill: logplan.BackfillPolicy{
+			Enabled: true,
+			Reason:  "windows_account_login_security_events",
+		},
+	})
 }
 
 func parseWindowTimestamp(value string) (time.Time, bool) {

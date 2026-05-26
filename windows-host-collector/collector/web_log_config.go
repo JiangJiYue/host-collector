@@ -120,20 +120,12 @@ func discoverNginxLogPaths(configPath string, visited map[string]struct{}) ([]st
 			}
 			continue
 		}
-		if strings.Contains(line, "access_log ") || strings.Contains(line, "error_log ") {
-			directive := "access_log"
-			if strings.Contains(line, "error_log ") {
-				directive = "error_log"
-			}
-			value := extractDirectiveValue(line, directive)
+		if strings.Contains(line, "access_log ") {
+			value := extractDirectiveValue(line, "access_log")
 			if value == "" {
 				continue
 			}
-			path := filepath.Clean(filepath.FromSlash(value))
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(baseDir, path)
-			}
-			paths = append(paths, path)
+			paths = append(paths, expandAccessLogVariants(resolveConfigPath(baseDir, value))...)
 		}
 	}
 
@@ -157,12 +149,7 @@ func discoverApacheLogPaths(configPath string) ([]string, error) {
 		case strings.HasPrefix(line, "CustomLog "):
 			path := extractQuotedOrFirstArg(strings.TrimPrefix(line, "CustomLog "))
 			if path != "" {
-				paths = append(paths, resolveConfigPath(baseDir, path))
-			}
-		case strings.HasPrefix(line, "ErrorLog "):
-			path := extractQuotedOrFirstArg(strings.TrimPrefix(line, "ErrorLog "))
-			if path != "" {
-				paths = append(paths, resolveConfigPath(baseDir, path))
+				paths = append(paths, expandAccessLogVariants(resolveConfigPath(baseDir, path))...)
 			}
 		}
 	}
@@ -255,7 +242,18 @@ func resolveConfigPath(baseDir string, path string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
-	return filepath.Join(baseDir, path)
+	primary := filepath.Join(baseDir, path)
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+	if strings.EqualFold(filepath.Base(baseDir), "conf") {
+		parent := filepath.Dir(baseDir)
+		alternate := filepath.Join(parent, path)
+		if _, err := os.Stat(alternate); err == nil {
+			return alternate
+		}
+	}
+	return primary
 }
 
 func uniqueSorted(paths []string) []string {

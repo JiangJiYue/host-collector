@@ -43,7 +43,7 @@ func (p windowsNetCommandAccountProvider) collect(ctx context.Context) ([]accoun
 }
 
 func runHiddenNetUserList(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "cmd", "/C", "chcp 65001>nul && net user")
+	cmd := exec.CommandContext(ctx, systemExecutablePath("cmd.exe"), "/D", "/C", "chcp 65001>nul && net user")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -53,7 +53,7 @@ func runHiddenNetUserList(ctx context.Context) (string, error) {
 }
 
 func runHiddenNetCommand(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "net", args...)
+	cmd := exec.CommandContext(ctx, systemExecutablePath("net.exe"), args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	output, err := cmd.CombinedOutput()
 	if err != nil {

@@ -95,3 +95,45 @@ func TestCollectParsesRpmPackageSnapshot(t *testing.T) {
 		t.Fatalf("unexpected rpm package evidence fields: %#v", pkg)
 	}
 }
+
+func TestCollectParsesAdditionalLinuxPackageManagers(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "lib", "apk", "db", "installed"), "P:busybox\nV:1.36.1-r7\nA:aarch64\nS:1048576\n\n")
+	mustWriteFile(t, filepath.Join(root, "var", "lib", "pacman", "local", "bash-5.2.026-2", "desc"), "%NAME%\nbash\n%VERSION%\n5.2.026-2\n%ARCH%\nx86_64\n%INSTALLDATE%\n1710000000\n%PACKAGER%\nArch Linux\n")
+	mustWriteFile(t, filepath.Join(root, "var", "lib", "snapd", "snaps", "core20_2015.snap"), "")
+	mustWriteFile(t, filepath.Join(root, "var", "lib", "flatpak", "app", "org.example.App", "current", "active", "metadata"), "[Application]\nname=org.example.App\nruntime=org.freedesktop.Platform/x86_64/23.08\n")
+
+	result, err := Collect(root)
+	if err != nil {
+		t.Fatalf("collect software: %v", err)
+	}
+
+	assertPackage(t, result.Packages, "busybox", "apk", "1.36.1-r7", "aarch64")
+	assertPackage(t, result.Packages, "bash", "pacman", "5.2.026-2", "x86_64")
+	assertPackage(t, result.Packages, "core20", "snap", "2015", "")
+	assertPackage(t, result.Packages, "org.example.App", "flatpak", "", "x86_64")
+}
+
+func assertPackage(t *testing.T, packages []Package, name string, manager string, version string, arch string) {
+	t.Helper()
+	for _, pkg := range packages {
+		if pkg.Name != name || pkg.PackageManager != manager {
+			continue
+		}
+		if pkg.Version != version || pkg.Architecture != arch || pkg.Platform != "linux" {
+			t.Fatalf("unexpected package %s/%s: %#v", name, manager, pkg)
+		}
+		return
+	}
+	t.Fatalf("missing package %s/%s in %#v", name, manager, packages)
+}
+
+func mustWriteFile(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+}

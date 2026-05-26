@@ -13,7 +13,7 @@ func TestDeriveBuildsTimelineEventsFromCollectedSections(t *testing.T) {
 	events := Derive(Inputs{
 		CollectedAt: "2026-05-03T10:00:00Z",
 		LogEvents: []logs.Event{
-			{EventType: "auth_success", Source: "var/log/auth.log", Program: "sshd", Actor: "alice", Evidence: "10.0.0.8"},
+			{EventType: "auth_success", Source: "var/log/auth.log", Program: "sshd", Actor: "alice", Evidence: "10.0.0.8", Timestamp: "2026-05-03T09:59:01Z"},
 		},
 		PersistenceItems: []startup.PersistenceItem{
 			{Kind: "systemd_service", Name: "evil.service", Source: "etc/systemd/system/evil.service", Command: "/bin/sh"},
@@ -42,9 +42,18 @@ func TestDeriveBuildsTimelineEventsFromCollectedSections(t *testing.T) {
 	if events[3].EventType != "linux.process.observed" || events[3].Subject.Type != "process" || events[3].Subject.ID != "pid:1" {
 		t.Fatalf("unexpected process timeline event: %#v", events[3])
 	}
-	for _, event := range events {
+	if events[0].Timestamp != "2026-05-03T09:59:01Z" {
+		t.Fatalf("expected log original timestamp, got %#v", events[0])
+	}
+	if events[0].PlatformExtensions.Linux["timestampSource"] != "log_event" {
+		t.Fatalf("expected log timestamp source, got %#v", events[0])
+	}
+	for _, event := range events[1:] {
 		if event.Timestamp != "2026-05-03T10:00:00Z" {
 			t.Fatalf("expected collectedAt timestamp, got %#v", event)
+		}
+		if event.PlatformExtensions.Linux["timestampSource"] != "collected_at" {
+			t.Fatalf("expected collectedAt timestamp source, got %#v", event)
 		}
 	}
 }

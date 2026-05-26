@@ -1,7 +1,9 @@
 package collector
 
 import (
+	"compress/gzip"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -56,7 +58,7 @@ func scanWebLogCandidateFiles(roots []string, options webLogScanOptions) ([]webL
 			}
 			ext := strings.ToLower(filepath.Ext(path))
 			if len(allowed) > 0 {
-				if _, ok := allowed[ext]; !ok {
+				if _, ok := allowed[ext]; !ok && !isAccessLogPath(path) {
 					return nil
 				}
 			}
@@ -107,9 +109,42 @@ func readFileSample(path string, maxBytes int64) ([]byte, error) {
 	}
 	defer file.Close()
 
+	if strings.EqualFold(filepath.Ext(path), ".gz") {
+		reader, err := gzip.NewReader(file)
+		if err != nil {
+			return nil, err
+		}
+		defer reader.Close()
+		return io.ReadAll(io.LimitReader(reader, maxBytes))
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxBytes && maxBytes >= 2 {
+		headSize := maxBytes / 2
+		tailSize := maxBytes - headSize
+		head := make([]byte, headSize)
+		headRead, err := file.Read(head)
+		if err != nil && headRead == 0 && err != io.EOF {
+			return nil, err
+		}
+		tail := make([]byte, tailSize)
+		tailRead, err := file.ReadAt(tail, info.Size()-tailSize)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		sample := make([]byte, 0, headRead+1+tailRead)
+		sample = append(sample, head[:headRead]...)
+		sample = append(sample, '\n')
+		sample = append(sample, tail[:tailRead]...)
+		return sample, nil
+	}
+
 	buf := make([]byte, maxBytes)
 	n, err := file.Read(buf)
-	if err != nil && n == 0 {
+	if err != nil && n == 0 && err != io.EOF {
 		return nil, err
 	}
 	return buf[:n], nil

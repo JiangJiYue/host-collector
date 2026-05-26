@@ -33,7 +33,7 @@ func fingerprintWebLogSample(path string, sample []byte) webLogFingerprint {
 		}
 	}
 
-	if strings.Contains(lowerPath, `\inetpub\logs\`) || strings.Contains(lowerPath, `\nginx\logs\`) || strings.Contains(lowerPath, "access.log") {
+	if strings.Contains(lowerPath, `\inetpub\logs\`) || strings.Contains(lowerPath, `\nginx\logs\`) || isAccessLogPath(path) {
 		return webLogFingerprint{
 			Format:     webLogFormatUnknown,
 			Confidence: webLogConfidenceMedium,
@@ -56,6 +56,9 @@ func looksLikeCombinedLog(text string) bool {
 			continue
 		}
 		if combinedLogPattern.MatchString(line) {
+			return true
+		}
+		if forwardedTimedLogPattern.MatchString(line) {
 			return true
 		}
 	}

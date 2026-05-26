@@ -1,9 +1,11 @@
 package weblogs
 
 import (
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -82,7 +84,8 @@ func Collect(config Config) (Result, error) {
 		if err != nil {
 			continue
 		}
-		if !looksLikeCombinedLog(string(body)) {
+		format, confidence, evidence := fingerprintLog(candidate, string(body))
+		if format == "" {
 			continue
 		}
 		sourceID := stableSourceID(candidate.Path)
@@ -91,11 +94,11 @@ func Collect(config Config) (Result, error) {
 				ID:           sourceID,
 				Path:         candidate.Path,
 				ServerType:   candidate.ServerType,
-				Format:       "combined",
+				Format:       format,
 				Port:         candidate.Port,
 				SourceMethod: candidate.SourceMethod,
-				Confidence:   "high",
-				Evidence:     uniqueSorted(append([]string{"COMBINED_LOG_PATTERN"}, candidate.Evidence...)),
+				Confidence:   confidence,
+				Evidence:     uniqueSorted(append(evidence, candidate.Evidence...)),
 				Size:         info.Size(),
 				ModifiedAt:   info.ModTime().Format(time.RFC3339),
 			})
@@ -103,7 +106,7 @@ func Collect(config Config) (Result, error) {
 		}
 		lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
 		for _, line := range lines {
-			entry, ok := parseCombinedLine(sourceID, candidate, line)
+			entry, ok := parseLogLine(sourceID, candidate, format, line)
 			if ok {
 				result.Entries = append(result.Entries, entry)
 			}
@@ -114,6 +117,23 @@ func Collect(config Config) (Result, error) {
 		return result.Entries[i].Timestamp+result.Entries[i].URI < result.Entries[j].Timestamp+result.Entries[j].URI
 	})
 	return result, nil
+}
+
+func fingerprintLog(candidate candidateSource, text string) (format string, confidence string, evidence []string) {
+	if looksLikeCombinedLog(text) {
+		return "combined", "high", []string{"COMBINED_LOG_PATTERN"}
+	}
+	if strings.TrimSpace(text) == "" && isAccessLogPath(candidate.Path) {
+		return "unknown", "medium", []string{"WEB_LOG_PATH_HINT"}
+	}
+	return "", "", nil
+}
+
+func parseLogLine(sourceID string, source candidateSource, format string, line string) (Entry, bool) {
+	if format == "combined" {
+		return parseCombinedLine(sourceID, source, line)
+	}
+	return Entry{}, false
 }
 
 func discoverCandidates(config Config) ([]candidateSource, error) {
@@ -133,7 +153,7 @@ func discoverCandidates(config Config) ([]candidateSource, error) {
 			if _, err := os.Stat(configPath); err != nil {
 				continue
 			}
-			paths, err := discoverLogPaths(configPath, candidate.ServerType)
+			paths, err := discoverLogPaths(configPath, candidate.ServerType, config.Root)
 			if err != nil {
 				return nil, err
 			}
@@ -150,6 +170,12 @@ func discoverCandidates(config Config) ([]candidateSource, error) {
 			}
 		}
 	}
+	panelCandidates, err := discoverPanelWebsiteLogCandidates(config.Root)
+	if err != nil {
+		return nil, err
+	}
+	candidates = append(candidates, panelCandidates...)
+	candidates = append(candidates, discoverPHPStudyDefaultLogCandidates(config.Root)...)
 	return dedupeSources(candidates), nil
 }
 
@@ -176,20 +202,206 @@ func listenerSignals(connections []network.Connection) []weblogdiscovery.Listene
 	return signals
 }
 
-func discoverLogPaths(configPath string, serverType string) ([]string, error) {
+func discoverLogPaths(configPath string, serverType string, root string) ([]string, error) {
 	switch strings.ToLower(serverType) {
 	case "nginx":
-		return discoverNginxLogPaths(configPath, map[string]struct{}{})
+		return discoverNginxLogPaths(configPath, map[string]struct{}{}, root)
+	case "openresty":
+		return discoverNginxLogPaths(configPath, map[string]struct{}{}, root)
 	case "apache":
-		return discoverApacheLogPaths(configPath)
+		return discoverApacheLogPaths(configPath, root)
 	case "tomcat":
-		return discoverTomcatLogPaths(configPath)
+		return discoverTomcatLogPaths(configPath, root)
 	default:
 		return nil, nil
 	}
 }
 
-func discoverNginxLogPaths(configPath string, visited map[string]struct{}) ([]string, error) {
+func discoverPanelWebsiteLogCandidates(root string) ([]candidateSource, error) {
+	var candidates []candidateSource
+	baota, err := discoverBaoTaWebsiteLogCandidates(root)
+	if err != nil {
+		return nil, err
+	}
+	candidates = append(candidates, baota...)
+	onePanel, err := discoverOnePanelWebsiteLogCandidates(root)
+	if err != nil {
+		return nil, err
+	}
+	candidates = append(candidates, onePanel...)
+	return candidates, nil
+}
+
+func discoverBaoTaWebsiteLogCandidates(root string) ([]candidateSource, error) {
+	type panelVhostRoot struct {
+		path         string
+		serverType   string
+		sourceMethod string
+		evidence     string
+	}
+	roots := []panelVhostRoot{
+		{
+			path:         "/www/server/panel/vhost/nginx",
+			serverType:   "nginx",
+			sourceMethod: "baotaPanelVhostConfig",
+			evidence:     "BAOTA_PANEL_VHOST_CONFIG",
+		},
+		{
+			path:         "/www/server/panel/vhost/apache",
+			serverType:   "apache",
+			sourceMethod: "baotaPanelVhostConfig",
+			evidence:     "BAOTA_PANEL_VHOST_CONFIG",
+		},
+	}
+
+	var candidates []candidateSource
+	for _, vhostRoot := range roots {
+		dir := rootPath(root, vhostRoot.path)
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		configs, err := globConfigFiles(dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, configPath := range configs {
+			paths, err := discoverLogPaths(configPath, vhostRoot.serverType, root)
+			if err != nil {
+				return nil, err
+			}
+			for _, path := range paths {
+				candidates = append(candidates, candidateSource{
+					Path:         cleanGuestPath(path),
+					ServerType:   vhostRoot.serverType,
+					SourceMethod: vhostRoot.sourceMethod,
+					Evidence:     []string{vhostRoot.evidence},
+				})
+			}
+		}
+	}
+	return candidates, nil
+}
+
+func discoverOnePanelWebsiteLogCandidates(root string) ([]candidateSource, error) {
+	openRestyRoot := "/opt/1panel/apps/openresty/openresty"
+	configDir := rootPath(root, filepath.Join(openRestyRoot, "conf", "conf.d"))
+	if _, err := os.Stat(configDir); err != nil {
+		return nil, nil
+	}
+	configs, err := globConfigFiles(configDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var candidates []candidateSource
+	for _, configPath := range configs {
+		paths, err := discoverLogPaths(configPath, "openresty", root)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range paths {
+			guestPath := mapOnePanelOpenRestyContainerPath(path)
+			evidence := []string{"ONEPANEL_OPENRESTY_WEBSITE_CONFIG"}
+			if guestPath != path {
+				evidence = append(evidence, "ONEPANEL_CONTAINER_PATH_MAPPING")
+			}
+			candidates = append(candidates, candidateSource{
+				Path:         cleanGuestPath(guestPath),
+				ServerType:   "openresty",
+				SourceMethod: "onePanelWebsiteConfig",
+				Evidence:     evidence,
+			})
+		}
+	}
+	return candidates, nil
+}
+
+func discoverPHPStudyDefaultLogCandidates(root string) []candidateSource {
+	roots := []string{"/phpstudy_pro", "/phpStudy"}
+	if root != "" {
+		for _, nested := range []string{"phpstudy_pro", "phpStudy"} {
+			roots = append(roots, "/"+nested)
+		}
+	}
+
+	var candidates []candidateSource
+	for _, phpStudyRoot := range uniqueSorted(roots) {
+		for _, server := range []struct {
+			serverType string
+			pattern    string
+		}{
+			{serverType: "apache", pattern: filepath.Join(phpStudyRoot, "Extensions", "Apache*", "logs")},
+			{serverType: "nginx", pattern: filepath.Join(phpStudyRoot, "Extensions", "Nginx*", "logs")},
+		} {
+			logDirs, err := filepath.Glob(rootPath(root, server.pattern))
+			if err != nil {
+				continue
+			}
+			for _, logDir := range logDirs {
+				for _, path := range accessLogFilesInDir(logDir) {
+					guestPath := path
+					if root != "" {
+						if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
+							guestPath = "/" + filepath.ToSlash(rel)
+						}
+					}
+					candidates = append(candidates, candidateSource{
+						Path:         cleanGuestPath(guestPath),
+						ServerType:   server.serverType,
+						SourceMethod: "phpStudyDefaultLogPath",
+						Evidence:     []string{"PHPSTUDY_DEFAULT_LOG_PATH"},
+					})
+				}
+			}
+		}
+	}
+	return candidates
+}
+
+func accessLogFilesInDir(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if !isAccessLogPath(entry.Name()) {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, entry.Name()))
+	}
+	return uniqueSorted(paths)
+}
+
+func globConfigFiles(dir string) ([]string, error) {
+	patterns := []string{
+		filepath.Join(dir, "*.conf"),
+		filepath.Join(dir, "*.vhost"),
+	}
+	var files []string
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, matches...)
+	}
+	return uniqueSorted(files), nil
+}
+
+func mapOnePanelOpenRestyContainerPath(path string) string {
+	cleaned := cleanGuestPath(path)
+	const containerSiteRoot = "/www/sites/"
+	if !strings.HasPrefix(cleaned, containerSiteRoot) {
+		return cleaned
+	}
+	return filepath.ToSlash(filepath.Join("/opt/1panel/apps/openresty/openresty/www/sites", strings.TrimPrefix(cleaned, containerSiteRoot)))
+}
+
+func discoverNginxLogPaths(configPath string, visited map[string]struct{}, root string) ([]string, error) {
 	configPath = filepath.Clean(configPath)
 	if _, ok := visited[configPath]; ok {
 		return nil, nil
@@ -214,7 +426,7 @@ func discoverNginxLogPaths(configPath string, visited map[string]struct{}) ([]st
 			}
 			sort.Strings(matches)
 			for _, match := range matches {
-				subPaths, err := discoverNginxLogPaths(match, visited)
+				subPaths, err := discoverNginxLogPaths(match, visited, root)
 				if err != nil {
 					return nil, err
 				}
@@ -223,13 +435,13 @@ func discoverNginxLogPaths(configPath string, visited map[string]struct{}) ([]st
 			continue
 		}
 		if strings.Contains(line, "access_log ") {
-			paths = append(paths, resolveConfigPath(baseDir, extractDirectiveValue(line, "access_log")))
+			paths = append(paths, expandLogVariants(resolveConfigPath(baseDir, extractDirectiveValue(line, "access_log")), root)...)
 		}
 	}
 	return uniqueSorted(paths), nil
 }
 
-func discoverApacheLogPaths(configPath string) ([]string, error) {
+func discoverApacheLogPaths(configPath string, root string) ([]string, error) {
 	body, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -242,13 +454,13 @@ func discoverApacheLogPaths(configPath string) ([]string, error) {
 			continue
 		}
 		if strings.HasPrefix(line, "CustomLog ") {
-			paths = append(paths, resolveConfigPath(baseDir, extractQuotedOrFirstArg(strings.TrimPrefix(line, "CustomLog "))))
+			paths = append(paths, expandLogVariants(resolveConfigPath(baseDir, extractQuotedOrFirstArg(strings.TrimPrefix(line, "CustomLog "))), root)...)
 		}
 	}
 	return uniqueSorted(paths), nil
 }
 
-func discoverTomcatLogPaths(configPath string) ([]string, error) {
+func discoverTomcatLogPaths(configPath string, root string) ([]string, error) {
 	body, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -285,11 +497,23 @@ func discoverTomcatLogPaths(configPath string) ([]string, error) {
 						continue
 					}
 					dir := resolveConfigPath(baseDir, v.Directory)
-					matches, err := filepath.Glob(filepath.Join(dir, v.Prefix+"*"+v.Suffix))
+					globDir := dir
+					if filepath.IsAbs(dir) {
+						globDir = rootPath(root, dir)
+					}
+					matches, err := filepath.Glob(filepath.Join(globDir, v.Prefix+"*"+v.Suffix))
 					if err != nil {
 						return nil, err
 					}
-					paths = append(paths, matches...)
+					for _, match := range matches {
+						guestPath := match
+						if root != "" {
+							if rel, err := filepath.Rel(root, match); err == nil && !strings.HasPrefix(rel, "..") {
+								guestPath = "/" + filepath.ToSlash(rel)
+							}
+						}
+						paths = append(paths, expandLogVariants(guestPath, root)...)
+					}
 				}
 			}
 		}
@@ -350,8 +574,61 @@ func readExistingFile(path string) ([]byte, os.FileInfo, error) {
 	if err != nil || info.IsDir() {
 		return nil, nil, err
 	}
+	if strings.HasSuffix(path, ".gz") {
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer file.Close()
+		reader, err := gzip.NewReader(file)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer reader.Close()
+		body, err := io.ReadAll(reader)
+		return body, info, err
+	}
 	body, err := os.ReadFile(path)
 	return body, info, err
+}
+
+func expandLogVariants(path string, root string) []string {
+	var variants []string
+	if path != "" {
+		variants = append(variants, path)
+	}
+	if !isAccessLogPath(path) {
+		return uniqueSorted(variants)
+	}
+	for _, candidate := range []string{path + ".1", path + ".2.gz", path + ".gz"} {
+		if _, err := os.Stat(rootPath(root, candidate)); err == nil {
+			variants = append(variants, candidate)
+		}
+	}
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	for _, pattern := range []string{base + ".*", strings.TrimSuffix(base, ".log") + "_*"} {
+		hostPattern := filepath.Join(dir, pattern)
+		if root != "" {
+			hostPattern = rootPath(root, hostPattern)
+		}
+		matches, err := filepath.Glob(hostPattern)
+		if err != nil {
+			continue
+		}
+		for _, match := range matches {
+			guestPath := match
+			if root != "" {
+				if rel, err := filepath.Rel(root, match); err == nil && !strings.HasPrefix(rel, "..") {
+					guestPath = "/" + filepath.ToSlash(rel)
+				}
+			}
+			if isAccessLogPath(guestPath) {
+				variants = append(variants, guestPath)
+			}
+		}
+	}
+	return uniqueSorted(variants)
 }
 
 func looksLikeCombinedLog(text string) bool {
@@ -361,6 +638,17 @@ func looksLikeCombinedLog(text string) bool {
 		}
 	}
 	return false
+}
+
+func isAccessLogPath(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	base = strings.TrimSuffix(base, ".gz")
+	return base == "access" ||
+		base == "access.log" ||
+		strings.HasPrefix(base, "access.log.") ||
+		strings.HasPrefix(base, "access_log") ||
+		strings.HasPrefix(base, "access-log") ||
+		strings.HasPrefix(base, "localhost_access_log")
 }
 
 func parseCombinedLine(sourceID string, source candidateSource, line string) (Entry, bool) {

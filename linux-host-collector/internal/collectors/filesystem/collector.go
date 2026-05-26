@@ -95,25 +95,33 @@ type FileEntry struct {
 	ADSCount                 int      `json:"adsCount,omitempty"`
 	ParseWarnings            []string `json:"parseWarnings,omitempty"`
 
-	Inode            uint64   `json:"inode,omitempty"`
-	DeviceID         uint64   `json:"deviceId,omitempty"`
-	Mode             string   `json:"mode,omitempty"`
-	Permissions      string   `json:"permissions,omitempty"`
-	UID              string   `json:"uid,omitempty"`
-	GID              string   `json:"gid,omitempty"`
-	Nlink            uint64   `json:"nlink,omitempty"`
-	FileType         string   `json:"fileType,omitempty"`
-	LinkTarget       string   `json:"linkTarget,omitempty"`
-	MountPoint       string   `json:"mountPoint,omitempty"`
-	FileSystem       string   `json:"filesystem,omitempty"`
-	SetUID           bool     `json:"setuid,omitempty"`
-	SetGID           bool     `json:"setgid,omitempty"`
-	Sticky           bool     `json:"sticky,omitempty"`
-	WorldWritable    bool     `json:"worldWritable,omitempty"`
-	HiddenName       bool     `json:"hiddenName,omitempty"`
-	EvidenceCategory string   `json:"evidenceCategory,omitempty"`
-	EvidenceTags     []string `json:"evidenceTags,omitempty"`
-	EvidenceReasons  []string `json:"evidenceReasons,omitempty"`
+	Inode             uint64   `json:"inode,omitempty"`
+	DeviceID          uint64   `json:"deviceId,omitempty"`
+	Mode              string   `json:"mode,omitempty"`
+	Permissions       string   `json:"permissions,omitempty"`
+	UID               string   `json:"uid,omitempty"`
+	GID               string   `json:"gid,omitempty"`
+	Nlink             uint64   `json:"nlink,omitempty"`
+	FileType          string   `json:"fileType,omitempty"`
+	LinkTarget        string   `json:"linkTarget,omitempty"`
+	MountPoint        string   `json:"mountPoint,omitempty"`
+	FileSystem        string   `json:"filesystem,omitempty"`
+	SetUID            bool     `json:"setuid,omitempty"`
+	SetGID            bool     `json:"setgid,omitempty"`
+	Sticky            bool     `json:"sticky,omitempty"`
+	WorldWritable     bool     `json:"worldWritable,omitempty"`
+	HiddenName        bool     `json:"hiddenName,omitempty"`
+	XattrNames        []string `json:"xattrNames,omitempty"`
+	HasACL            bool     `json:"hasAcl,omitempty"`
+	ACLTypes          []string `json:"aclTypes,omitempty"`
+	SELinuxContext    string   `json:"selinuxContext,omitempty"`
+	LinuxCapabilities string   `json:"linuxCapabilities,omitempty"`
+	IntegrityXattrs   []string `json:"integrityXattrs,omitempty"`
+	Immutable         bool     `json:"immutable,omitempty"`
+	AppendOnly        bool     `json:"appendOnly,omitempty"`
+	EvidenceCategory  string   `json:"evidenceCategory,omitempty"`
+	EvidenceTags      []string `json:"evidenceTags,omitempty"`
+	EvidenceReasons   []string `json:"evidenceReasons,omitempty"`
 }
 
 type TimelineEvent struct {
@@ -285,47 +293,56 @@ func buildFileEntry(volumeID string, relPath string, absPath string, info os.Fil
 	}
 	flags := recordFlags(mode, info.Name())
 	evidenceCategory, evidenceTags := evidenceTagsForPath(relPath, mode)
+	securityAttrs := collectSecurityAttributes(absPath)
 	return FileEntry{
-		EntryID:          entryID(stat.Dev, stat.Ino),
-		VolumeID:         volumeID,
-		Path:             relPath,
-		ParentPath:       parent,
-		Name:             info.Name(),
-		Extension:        extension(info.Name()),
-		IsDirectory:      info.IsDir(),
-		IsDeleted:        false,
-		IsAllocated:      true,
-		IsOrphan:         false,
-		Size:             info.Size(),
-		AllocatedSize:    allocatedSize(stat.Blocks),
-		HashState:        "not_hashed",
-		ModifiedAt:       formatUnixTime(stat.MtimSec, stat.MtimNsec),
-		AccessedAt:       formatUnixTime(stat.AtimSec, stat.AtimNsec),
-		ChangedAt:        formatUnixTime(stat.CtimSec, stat.CtimNsec),
-		TimestampSource:  "stat",
-		RecordFlags:      flags,
-		NameType:         "posix",
-		ReparseTarget:    linkTarget,
-		ParseWarnings:    warnings,
-		Inode:            stat.Ino,
-		DeviceID:         stat.Dev,
-		Mode:             fmt.Sprintf("%#o", uint32(mode.Perm())),
-		Permissions:      mode.Perm().String(),
-		UID:              strconv.FormatUint(uint64(stat.UID), 10),
-		GID:              strconv.FormatUint(uint64(stat.GID), 10),
-		Nlink:            stat.Nlink,
-		FileType:         fileType(mode),
-		LinkTarget:       linkTarget,
-		MountPoint:       mount.MountPoint,
-		FileSystem:       mount.FileSystem,
-		SetUID:           mode&os.ModeSetuid != 0,
-		SetGID:           mode&os.ModeSetgid != 0,
-		Sticky:           mode&os.ModeSticky != 0,
-		WorldWritable:    mode.Perm()&0o002 != 0,
-		HiddenName:       strings.HasPrefix(info.Name(), ".") && info.Name() != "." && info.Name() != "..",
-		EvidenceCategory: evidenceCategory,
-		EvidenceTags:     evidenceTags,
-		EvidenceReasons:  evidenceReasonsForTags(evidenceTags),
+		EntryID:           entryID(stat.Dev, stat.Ino),
+		VolumeID:          volumeID,
+		Path:              relPath,
+		ParentPath:        parent,
+		Name:              info.Name(),
+		Extension:         extension(info.Name()),
+		IsDirectory:       info.IsDir(),
+		IsDeleted:         false,
+		IsAllocated:       true,
+		IsOrphan:          false,
+		Size:              info.Size(),
+		AllocatedSize:     allocatedSize(stat.Blocks),
+		HashState:         "not_hashed",
+		ModifiedAt:        formatUnixTime(stat.MtimSec, stat.MtimNsec),
+		AccessedAt:        formatUnixTime(stat.AtimSec, stat.AtimNsec),
+		ChangedAt:         formatUnixTime(stat.CtimSec, stat.CtimNsec),
+		TimestampSource:   "stat",
+		RecordFlags:       flags,
+		NameType:          "posix",
+		ReparseTarget:     linkTarget,
+		ParseWarnings:     warnings,
+		Inode:             stat.Ino,
+		DeviceID:          stat.Dev,
+		Mode:              fmt.Sprintf("%#o", uint32(mode.Perm())),
+		Permissions:       mode.Perm().String(),
+		UID:               strconv.FormatUint(uint64(stat.UID), 10),
+		GID:               strconv.FormatUint(uint64(stat.GID), 10),
+		Nlink:             stat.Nlink,
+		FileType:          fileType(mode),
+		LinkTarget:        linkTarget,
+		MountPoint:        mount.MountPoint,
+		FileSystem:        mount.FileSystem,
+		SetUID:            mode&os.ModeSetuid != 0,
+		SetGID:            mode&os.ModeSetgid != 0,
+		Sticky:            mode&os.ModeSticky != 0,
+		WorldWritable:     mode.Perm()&0o002 != 0,
+		HiddenName:        strings.HasPrefix(info.Name(), ".") && info.Name() != "." && info.Name() != "..",
+		XattrNames:        securityAttrs.XattrNames,
+		HasACL:            securityAttrs.HasACL,
+		ACLTypes:          securityAttrs.ACLTypes,
+		SELinuxContext:    securityAttrs.SELinuxContext,
+		LinuxCapabilities: securityAttrs.LinuxCapabilities,
+		IntegrityXattrs:   securityAttrs.IntegrityXattrs,
+		Immutable:         securityAttrs.Immutable,
+		AppendOnly:        securityAttrs.AppendOnly,
+		EvidenceCategory:  evidenceCategory,
+		EvidenceTags:      evidenceTags,
+		EvidenceReasons:   evidenceReasonsForTags(evidenceTags),
 	}
 }
 

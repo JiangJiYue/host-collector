@@ -18,12 +18,13 @@ type Result struct {
 }
 
 type OperationRecord struct {
-	Event         string `json:"event"`
-	OperationTime string `json:"operationTime,omitempty"`
-	File          string `json:"file"`
-	FilePath      string `json:"filePath"`
-	Source        string `json:"source"`
-	Platform      string `json:"platform"`
+	Event           string `json:"event"`
+	OperationTime   string `json:"operationTime,omitempty"`
+	TimestampSource string `json:"timestampSource,omitempty"`
+	File            string `json:"file"`
+	FilePath        string `json:"filePath"`
+	Source          string `json:"source"`
+	Platform        string `json:"platform"`
 }
 
 type passwdUser struct {
@@ -131,13 +132,18 @@ func readBashHistory(path string, relativePath string, username string) ([]Opera
 			}
 			continue
 		}
+		timestampSource := ""
+		if pendingTimestamp != "" {
+			timestampSource = "bash_history_timestamp"
+		}
 		records = append(records, OperationRecord{
-			Event:         "shell_history",
-			OperationTime: pendingTimestamp,
-			File:          redactCommand(line),
-			FilePath:      relativePath,
-			Source:        username + ":bash_history",
-			Platform:      "linux",
+			Event:           "shell_history",
+			OperationTime:   pendingTimestamp,
+			TimestampSource: timestampSource,
+			File:            redactCommand(line),
+			FilePath:        relativePath,
+			Source:          username + ":bash_history",
+			Platform:        "linux",
 		})
 		pendingTimestamp = ""
 	}
@@ -159,13 +165,18 @@ func readZshHistory(path string, relativePath string, username string) ([]Operat
 			continue
 		}
 		timestamp, command := parseZshHistoryLine(line)
+		timestampSource := ""
+		if timestamp != "" {
+			timestampSource = "zsh_extended_history"
+		}
 		records = append(records, OperationRecord{
-			Event:         "shell_history",
-			OperationTime: timestamp,
-			File:          redactCommand(command),
-			FilePath:      relativePath,
-			Source:        username + ":zsh_history",
-			Platform:      "linux",
+			Event:           "shell_history",
+			OperationTime:   timestamp,
+			TimestampSource: timestampSource,
+			File:            redactCommand(command),
+			FilePath:        relativePath,
+			Source:          username + ":zsh_history",
+			Platform:        "linux",
 		})
 	}
 	return records, scanner.Err()

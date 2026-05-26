@@ -6,10 +6,10 @@ import (
 )
 
 const (
-	accountSourceNetAPI = "netApi"
-	accountSourceWMI    = "wmi"
-	accountSourceNetCmd = "netCommand"
-	accountSourceSAM    = "sam"
+	accountSourceNetAPI  = "netApi"
+	accountSourceWMI     = "wmi"
+	accountSourceNetCmd  = "netCommand"
+	accountSourceSAM     = "sam"
 	accountSourceSession = "session"
 )
 
@@ -28,21 +28,23 @@ const (
 )
 
 const (
-	shadowReasonSAMOnly               = "SAM_ONLY"
-	shadowReasonSAMNameIndexMissing   = "SAM_NAME_INDEX_MISSING"
-	shadowReasonSAMRIDKeyMissing      = "SAM_RID_KEY_MISSING"
-	shadowReasonRIDMismatch           = "RID_MISMATCH"
-	shadowReasonAPIInvisible          = "API_INVISIBLE"
-	shadowReasonNetCommandInvisible   = "NET_COMMAND_INVISIBLE"
-	shadowReasonSAMFShared            = "SAM_F_SHARED"
-	shadowReasonSAMVShared            = "SAM_V_SHARED"
-	shadowReasonBuiltinRIDAbuse       = "BUILTIN_RID_ABUSE"
-	shadowReasonAdminAliasMember      = "ADMIN_ALIAS_MEMBER"
-	shadowReasonRIDSequenceAbnormal   = "RID_SEQUENCE_ABNORMAL"
-	shadowReasonNetAPICommandMismatch = "NETAPI_COMMAND_MISMATCH"
-	shadowReasonWMICommandMismatch    = "WMI_COMMAND_MISMATCH"
-	shadowReasonSourceMismatch        = "SOURCE_MISMATCH"
-	shadowReasonSAMUnchecked          = "SAM_UNCHECKED"
+	shadowReasonSAMOnly                  = "SAM_ONLY"
+	shadowReasonSAMNameIndexMissing      = "SAM_NAME_INDEX_MISSING"
+	shadowReasonSAMRIDKeyMissing         = "SAM_RID_KEY_MISSING"
+	shadowReasonRIDMismatch              = "RID_MISMATCH"
+	shadowReasonAPIInvisible             = "API_INVISIBLE"
+	shadowReasonNetCommandInvisible      = "NET_COMMAND_INVISIBLE"
+	shadowReasonSAMFShared               = "SAM_F_SHARED"
+	shadowReasonSAMVShared               = "SAM_V_SHARED"
+	shadowReasonBuiltinRIDAbuse          = "BUILTIN_RID_ABUSE"
+	shadowReasonAdminAliasMember         = "ADMIN_ALIAS_MEMBER"
+	shadowReasonRIDSequenceAbnormal      = "RID_SEQUENCE_ABNORMAL"
+	shadowReasonNetAPICommandMismatch    = "NETAPI_COMMAND_MISMATCH"
+	shadowReasonWMICommandMismatch       = "WMI_COMMAND_MISMATCH"
+	shadowReasonSourceMismatch           = "SOURCE_MISMATCH"
+	shadowReasonSAMUnchecked             = "SAM_UNCHECKED"
+	shadowReasonDollarSuffixLocalAccount = "DOLLAR_SUFFIX_LOCAL_ACCOUNT"
+	shadowReasonAdminGroupMember         = "ADMIN_GROUP_MEMBER"
 )
 
 type accountSourceBundle struct {

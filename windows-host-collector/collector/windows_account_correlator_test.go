@@ -255,6 +255,49 @@ func TestCorrelateAccountsSAMErrorSetsUnchecked(t *testing.T) {
 	}
 }
 
+func TestCorrelateAccountsSAMUncheckedUsesSideEvidenceForDollarAdminAccount(t *testing.T) {
+	sid := "S-1-5-21-100063101-1421488037-1938337138-1002"
+	rid := uint32(1002)
+	accounts := correlateAccountSources(accountSourceBundle{
+		NetAPI: []accountSourceRecord{
+			{
+				Username:      "hack168$",
+				SID:           &sid,
+				RID:           &rid,
+				Source:        accountSourceNetAPI,
+				NetAPIVisible: true,
+				LocalGroups:   []string{"Administrators", "Remote Desktop Users"},
+			},
+		},
+		WMI: []accountSourceRecord{
+			{Username: "hack168$", SID: &sid, RID: &rid, Source: accountSourceWMI, WMIVisible: true},
+		},
+		NetCmd: []accountSourceRecord{},
+		SAMErr: errors.New("sam read denied"),
+	})
+
+	if len(accounts) != 1 {
+		t.Fatalf("expected one account, got %d", len(accounts))
+	}
+	got := accounts[0]
+	if !got.Shadow.IsShadowAccount {
+		t.Fatalf("expected side-evidence shadow account, got %+v", got.Shadow)
+	}
+	if got.Shadow.Status != shadowStatusSuspicious {
+		t.Fatalf("expected status %q, got %q", shadowStatusSuspicious, got.Shadow.Status)
+	}
+	for _, want := range []string{
+		shadowReasonSAMUnchecked,
+		shadowReasonDollarSuffixLocalAccount,
+		shadowReasonAdminGroupMember,
+		shadowReasonNetCommandInvisible,
+	} {
+		if !slices.Contains(got.Shadow.Reasons, want) {
+			t.Fatalf("expected reason %q in %v", want, got.Shadow.Reasons)
+		}
+	}
+}
+
 func TestCorrelateAccountsSAMNotConfirmedWhenNetAPIFails(t *testing.T) {
 	rid := uint32(2001)
 	accounts := correlateAccountSources(accountSourceBundle{

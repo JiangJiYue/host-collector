@@ -2,14 +2,23 @@ package models
 
 // PrefetchEntry Prefetch 文件条目（对应前端 types.ts L405-414）
 type PrefetchEntry struct {
-	File        string `json:"file"`
-	ProcessName string `json:"processName"`
-	ProcessPath string `json:"processPath"`
-	RunCount    int    `json:"runCount"`
-	LastRunTime string `json:"lastRunTime"`
-	Exists      bool   `json:"exists"`
-	CreateTime  string `json:"createTime"`
-	ModifyTime  string `json:"modifyTime"`
+	File             string   `json:"file"`
+	ProcessName      string   `json:"processName"`
+	ProcessPath      string   `json:"processPath"`
+	RunCount         int      `json:"runCount"`
+	LastRunTime      string   `json:"lastRunTime"`
+	RunTimes         []string `json:"runTimes,omitempty"`
+	ReferencedFiles  []string `json:"referencedFiles,omitempty"`
+	FormatVersion    int      `json:"formatVersion,omitempty"`
+	FileHash         string   `json:"fileHash,omitempty"`
+	EmbeddedHash     string   `json:"embeddedHash,omitempty"`
+	SourcePath       string   `json:"sourcePath,omitempty"`
+	ParseStatus      string   `json:"parseStatus,omitempty"`
+	ParseError       string   `json:"parseError,omitempty"`
+	PrefetchFileSize int64    `json:"prefetchFileSize,omitempty"`
+	Exists           bool     `json:"exists"`
+	CreateTime       string   `json:"createTime"`
+	ModifyTime       string   `json:"modifyTime"`
 }
 
 // BrowserHistoryEntry 浏览器历史条目（对应前端 types.ts L416-421）
@@ -55,6 +64,7 @@ type WebLogEntry struct {
 	SiteName    string `json:"siteName,omitempty"`
 	ProcessName string `json:"processName,omitempty"`
 	ProcessPID  int    `json:"processPid,omitempty"`
+	Raw         string `json:"raw,omitempty"`
 }
 
 // UsbRecord USB 设备记录（对应前端 types.ts L423-429）
